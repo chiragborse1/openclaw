@@ -45,7 +45,7 @@ function seedPendingRows(count: number, textBytes = 0, agentId = "main") {
   return { options, database };
 }
 
-it.each(["unchanged", "pending edit", "replacement", "revoked"] as const)(
+it.each(["unchanged", "pending edit", "replacement", "revoked", "unregistered"] as const)(
   "admits only changed or revoked populated stores after a process restart (%s)",
   async (change) => {
     await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
@@ -75,6 +75,7 @@ it.each(["unchanged", "pending edit", "replacement", "revoked"] as const)(
         "../../state/openclaw-agent-db-validation-cache.ts",
         import.meta.url,
       ).href;
+      const registry = new URL("../../state/openclaw-agent-db-registry.ts", import.meta.url).href;
       const result = spawnSync(
         process.execPath,
         [
@@ -84,12 +85,15 @@ it.each(["unchanged", "pending edit", "replacement", "revoked"] as const)(
           "--eval",
           `import { certifySessionCanonicalValidationPending } from ${JSON.stringify(readiness)};
            import { openOpenClawAgentDatabaseReadOnly } from ${JSON.stringify(reader)};
+           import { unregisterOpenClawAgentDatabases } from ${JSON.stringify(registry)};
            import {
              getOpenClawAgentDatabaseValidation,
              invalidateOpenClawAgentDatabaseValidation,
            } from ${JSON.stringify(validation)};
            if (${JSON.stringify(change)} === "revoked") {
              invalidateOpenClawAgentDatabaseValidation(${JSON.stringify(database.path)});
+           } else if (${JSON.stringify(change)} === "unregistered") {
+             unregisterOpenClawAgentDatabases({ agentId: "main" });
            }
            let workers = 0;
            let integrityReceipts = 0;

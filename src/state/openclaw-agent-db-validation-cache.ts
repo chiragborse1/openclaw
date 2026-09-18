@@ -249,7 +249,13 @@ export function invalidateOpenClawAgentDatabaseValidation(pathname: string): voi
   }
 }
 
-export function invalidateOpenClawAgentDatabaseValidationsForAgent(agentId: string): void {
+export function invalidateOpenClawAgentDatabaseValidationsForAgent(
+  agentId: string,
+  removedPaths: readonly string[],
+): void {
+  for (const pathname of removedPaths) {
+    invalidateOpenClawAgentDatabaseValidation(pathname);
+  }
   for (const [pathname, entry] of validatedPaths) {
     if (entry?.validation.agentId === agentId) {
       invalidateOpenClawAgentDatabaseValidation(pathname);
