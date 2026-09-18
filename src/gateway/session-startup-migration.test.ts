@@ -18,7 +18,10 @@ import { setCanonicalSqliteSessionMainKey } from "../config/sessions/session-can
 import { sessionTranscriptIndexNeedsReconcile } from "../config/sessions/session-transcript-index.js";
 import { waitForSessionTranscriptIndexReconcile } from "../config/sessions/session-transcript-reconcile.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import * as gatewayLock from "../infra/gateway-lock.js";
+import * as gatewayOwner from "../infra/gateway-owner-lease.js";
 import * as nodeSqlite from "../infra/node-sqlite.js";
+import * as coordinator from "../infra/state-database-coordinator.js";
 import {
   closeOpenClawAgentDatabasesAsync,
   closeOpenClawAgentDatabasesForTest,
@@ -50,31 +53,70 @@ function makeLog() {
 }
 
 describe("runStartupSessionMigration", () => {
-  it("does not start canonical validation workers for a cold empty fleet on either boot", async () => {
-    const stateDir = tempDirs.make("openclaw-empty-fleet-startup-");
-    const env = { ...process.env, OPENCLAW_STATE_DIR: stateDir };
-    const agentIds = ["fleet-a", "fleet-b", "fleet-c", "fleet-d"];
-    const cfg: OpenClawConfig = {
-      agents: {
-        ownership: "explicit",
-        entries: Object.fromEntries(agentIds.map((id) => [id, {}])),
-      },
-    };
-    for (const agentId of agentIds) {
-      openOpenClawAgentDatabase({ agentId, env });
-    }
-    const started = vi.spyOn(archiveWorker, "createSqliteTranscriptArchiveWorker");
-    try {
-      for (let boot = 0; boot < 2; boot++) {
-        await closeOpenClawAgentDatabasesAsync();
-        closeOpenClawAgentDatabasesForTest();
-        await runStartupSessionMigration({ cfg, env, log: makeLog() });
-        expect(started).not.toHaveBeenCalled();
+  it.each([false, true])(
+    "keeps clean fleet maintenance read-only on both boots (Gateway owner=%s)",
+    async (gatewayActive) => {
+      const stateDir = tempDirs.make("openclaw-empty-fleet-startup-");
+      const env = { ...process.env, OPENCLAW_STATE_DIR: stateDir };
+      const agentIds = ["fleet-a", "fleet-b", "fleet-c", "fleet-d"];
+      const cfg: OpenClawConfig = {
+        agents: {
+          ownership: "explicit",
+          entries: Object.fromEntries(agentIds.map((id) => [id, {}])),
+        },
+      };
+      for (const agentId of agentIds) {
+        openOpenClawAgentDatabase({ agentId, env });
       }
-    } finally {
-      started.mockRestore();
-    }
-  });
+      const started = vi.spyOn(archiveWorker, "createSqliteTranscriptArchiveWorker");
+      const open = vi.spyOn(nodeSqlite, "openNodeSqliteDatabase");
+      const lifecycle = vi
+        .spyOn(coordinator, "hasGatewayLifecycleCoordinator")
+        .mockReturnValue(gatewayActive);
+      const lock = vi.spyOn(gatewayLock, "readActiveGatewayLockIdentity").mockResolvedValue({
+        pid: process.pid,
+        ownerId: "fleet-startup-owner",
+        createdAt: new Date().toISOString(),
+        port: 18789,
+      });
+      const owner = vi.spyOn(gatewayOwner, "readGatewayOwnerLease").mockReturnValue({
+        pid: process.pid,
+        host: "fixture",
+        startedAt: null,
+        owner: "fleet-startup-owner",
+        port: 18789,
+        mode: "foreground",
+        supervisor: null,
+        state: "live",
+        expired: false,
+      });
+      try {
+        for (let boot = 0; boot < 2; boot++) {
+          await closeOpenClawAgentDatabasesAsync();
+          closeOpenClawAgentDatabasesForTest();
+          open.mockClear();
+          const log = makeLog();
+          await runStartupSessionMigration({ cfg, env, log });
+          expect(started).not.toHaveBeenCalled();
+          expect(log.warn).not.toHaveBeenCalled();
+          expect(
+            open.mock.calls.filter(
+              ([pathname, behavior]) =>
+                typeof pathname === "string" &&
+                pathname.endsWith("openclaw-agent.sqlite") &&
+                behavior?.readOnly !== true,
+            ),
+          ).toEqual([]);
+        }
+      } finally {
+        started.mockRestore();
+        open.mockRestore();
+        lifecycle.mockRestore();
+        lock.mockRestore();
+        owner.mockRestore();
+      }
+    },
+  );
 
   it.each(["successful", "failed"] as const)(
     "hands the cold maintenance connection directly to %s reconciliation",

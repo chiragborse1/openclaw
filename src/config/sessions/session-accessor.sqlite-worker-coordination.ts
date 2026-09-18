@@ -70,10 +70,26 @@ export async function withSqliteMutationWorkerCoordination<T>(
   run: (coordination: SqliteMutationWorkerCoordination) => Promise<T>,
 ): Promise<T> {
   const actorId = `${worker.threadId}:${operationId}`;
-  let delegate: ReturnType<typeof tryCreateStateLifecycleDelegate>;
   // Preparation can fail before the mutation request installs its transport owner.
   const preparingError = () => {};
   worker.on("error", preparingError);
+  try {
+    return await withSqliteWorkerLifecycleCoordination(context, actorId, run, async () => {
+      await worker.terminate();
+    });
+  } finally {
+    worker.off("error", preparingError);
+  }
+}
+
+/** Each transport joins its native operation before relinquishing shared-state custody. */
+export async function withSqliteWorkerLifecycleCoordination<T>(
+  context: OpenClawStateWorkerContext,
+  actorId: string,
+  run: (coordination: SqliteMutationWorkerCoordination) => Promise<T>,
+  settleFailure: () => Promise<void>,
+): Promise<T> {
+  let delegate: ReturnType<typeof tryCreateStateLifecycleDelegate>;
   let outcome: { value: T } | { error: unknown };
   try {
     delegate = await prepareLifecycleDelegate(context, actorId);
@@ -94,7 +110,7 @@ export async function withSqliteMutationWorkerCoordination<T>(
   } catch (error) {
     outcome = { error };
     try {
-      await worker.terminate();
+      await settleFailure();
     } catch (exitError) {
       outcome.error = new AggregateError(
         [error, exitError],
@@ -104,8 +120,6 @@ export async function withSqliteMutationWorkerCoordination<T>(
         },
       );
     }
-  } finally {
-    worker.off("error", preparingError);
   }
   try {
     delegate?.release();

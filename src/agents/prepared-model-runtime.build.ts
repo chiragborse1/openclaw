@@ -26,6 +26,7 @@ import {
   prepareConfiguredModelFacts,
   prepareConfiguredRuntimeFactsBatch,
   prepareWorkspaceBuildGroup,
+  type PreparedConfiguredModelRegistries,
 } from "./prepared-model-runtime.facts.js";
 import {
   createPreparedModelRuntimeSnapshot,
@@ -184,6 +185,7 @@ async function buildSnapshotBatch(
       return prepared;
     };
     const loadInboundPluginRegistry = createPreparedInboundRegistryLoader();
+    const configuredModelRegistries: PreparedConfiguredModelRegistries = new Map();
     // Config objects can change between publications. Share this projection only
     // inside the current build batch so every later publication reads fresh config.
     const configuredHarnessRuntimesByConfig = new Map<OpenClawConfig, readonly string[]>();
@@ -279,6 +281,7 @@ async function buildSnapshotBatch(
           agentFacts: prepared.agentFacts,
           pluginGeneration: prepared.pluginGeneration,
           assertCurrent: assertBuildCurrent,
+          registries: configuredModelRegistries,
         });
         runtimeRegistryCount += batch.registryCount;
         registryMs += performance.now() - startedAt;
