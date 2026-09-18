@@ -43,7 +43,8 @@ it.each([undefined, 600_000])(
     const stat = fs.statSync;
     fs.statSync = function(file, ...args) {
       if (file === ${JSON.stringify(file)}) {
-        fs.writeFileSync(${JSON.stringify(ready)}, "ready");
+        fs.writeFileSync(${JSON.stringify(`${ready}.tmp`)}, JSON.stringify({ pid: process.pid }));
+        fs.renameSync(${JSON.stringify(`${ready}.tmp`)}, ${JSON.stringify(ready)});
         while (!fs.existsSync(${JSON.stringify(release)})) {
           Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
         }
@@ -52,7 +53,7 @@ it.each([undefined, 600_000])(
     };
   `,
     );
-    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const timers = vi.spyOn(globalThis, "setTimeout");
     const controller = new AbortController();
     const operation = readUpdateStateDatabaseSizes([file], {
       nodeRunner: process.execPath,
@@ -66,13 +67,28 @@ it.each([undefined, 600_000])(
     );
     try {
       await waitForFile(ready);
-      await vi.advanceTimersByTimeAsync(400_000);
-      await new Promise<void>((resolve) => {
-        realSetTimeout(resolve, 20);
-      });
+      const { pid } = JSON.parse(await fs.readFile(ready, "utf8")) as { pid: number };
+      const deadlines = timers.mock.calls.flatMap(([callback, delay, ...args], index) =>
+        delay !== undefined && delay >= 30_000 ? [{ callback, delay, args, index }] : [],
+      );
+      expect(deadlines).toHaveLength(1);
+      // Advance only the inspection allowance. Native signal delivery and
+      // process-group cleanup must retain their real clock and grace periods.
+      for (const deadline of deadlines) {
+        if (deadline.delay > 400_000) {
+          continue;
+        }
+        const timer = timers.mock.results[deadline.index];
+        if (timer?.type !== "return") {
+          throw new Error("Inspection deadline was not scheduled");
+        }
+        clearTimeout(timer.value);
+        deadline.callback(...deadline.args);
+      }
+      if (timeoutMs !== undefined) {
+        expect(() => process.kill(pid, 0)).not.toThrow();
+      }
       await fs.writeFile(release, "continue");
-      await vi.advanceTimersByTimeAsync(1_000);
-      vi.useRealTimers();
       if (timeoutMs === undefined) {
         expect(await operation).toMatchObject({
           error: expect.objectContaining({
@@ -97,13 +113,11 @@ it.each([undefined, 600_000])(
       } else {
         expect(await operation).toEqual({ sizes: [{ path: file, sizeBytes: 8n }] });
       }
+      expect(() => process.kill(pid, 0)).toThrow();
+      expect(await fs.readFile(file, "utf8")).toBe("database");
     } finally {
       await fs.writeFile(release, "continue");
       controller.abort();
-      if (vi.isFakeTimers()) {
-        await vi.advanceTimersByTimeAsync(1_000);
-      }
-      vi.useRealTimers();
       await operation;
     }
   },
