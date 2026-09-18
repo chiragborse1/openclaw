@@ -9,6 +9,9 @@ import {
   restoreRestartHealthMocks,
 } from "./restart-health.test-helpers.js";
 
+const { waitForGatewayHealthyRestart, formatGatewayRestartFailure } =
+  await import("./restart-health.js");
+
 describe("restart startup progress", () => {
   beforeEach(resetRestartHealthMocks);
   afterEach(restoreRestartHealthMocks);
@@ -33,7 +36,6 @@ describe("restart startup progress", () => {
       }
       return {};
     });
-    const { waitForGatewayHealthyRestart } = await import("./restart-health.js");
     const health = await waitForGatewayHealthyRestart({
       service,
       port: 18789,
@@ -43,8 +45,23 @@ describe("restart startup progress", () => {
   });
 
   it.each([
+    {
+      name: "lease acquired at 1s with its first heartbeat at 61s",
+      renew: true,
+      readyAtMs: 90_000,
+      expected: "healthy",
+      elapsedMs: 90_000,
+    },
+    {
+      name: "heartbeat observed after polling delay",
+      renew: true,
+      readyAtMs: 90_000,
+      pollJitterMs: 250,
+      expected: "healthy",
+      elapsedMs: 90_250,
+    },
     { name: "renewing migration", renew: true, expected: "still-starting", elapsedMs: 300_000 },
-    { name: "stalled migration", renew: false, expected: "timeout", elapsedMs: 60_000 },
+    { name: "stalled migration", renew: false, expected: "timeout", elapsedMs: 70_000 },
     {
       name: "replaced process",
       renew: true,
@@ -66,61 +83,107 @@ describe("restart startup progress", () => {
       expected: "timeout",
       elapsedMs: 60_000,
     },
-  ])("bounds a $name", async ({ renew, replace, replaceBoot, foreign, expected, elapsedMs }) => {
-    const service = makeGatewayService({ status: "running", pid: 8000 });
-    if (replace) {
-      vi.mocked(service.readRuntime).mockImplementation(async () => ({
-        status: "running",
-        pid: monotonicClock.nowMs < 30_000 ? 8000 : 9000,
-      }));
-    }
-    if (replaceBoot) {
-      inspectPortUsage.mockResolvedValue({
+  ])(
+    "bounds a $name",
+    async ({
+      renew,
+      replace,
+      replaceBoot,
+      foreign,
+      readyAtMs,
+      pollJitterMs,
+      expected,
+      elapsedMs,
+    }) => {
+      const service = makeGatewayService({ status: "running", pid: 8000 });
+      if (readyAtMs !== undefined) {
+        inspectPortUsage.mockImplementation(async (port) => ({
+          port,
+          status: monotonicClock.nowMs < readyAtMs ? "free" : "busy",
+          listeners: monotonicClock.nowMs < readyAtMs ? [] : [{ pid: 8000 }],
+          hints: [],
+        }));
+        callGateway.mockImplementation(
+          gatewayHealthResponse({ server: { bootId: "stable-boot" } }),
+        );
+      }
+      if (pollJitterMs) {
+        vi.mocked(service.readRuntime).mockImplementation(async () => {
+          if (monotonicClock.nowMs === 60_000) {
+            monotonicClock.nowMs += pollJitterMs;
+          }
+          return { status: "running", pid: 8000 };
+        });
+      }
+      if (replace) {
+        vi.mocked(service.readRuntime).mockImplementation(async () => ({
+          status: "running",
+          pid: monotonicClock.nowMs < 30_000 ? 8000 : 9000,
+        }));
+      }
+      if (replaceBoot) {
+        inspectPortUsage.mockResolvedValue({
+          port: 18789,
+          status: "busy",
+          listeners: [{ pid: 8000 }],
+          hints: [],
+        });
+        callGateway.mockImplementation((opts) =>
+          gatewayHealthResponse({
+            server: { bootId: monotonicClock.nowMs < 30_000 ? "boot-a" : "boot-b" },
+            error: new Error("Gateway health is not ready"),
+          })(opts),
+        );
+      }
+      const isStartupMigrationActive = ({
+        onActivity,
+      }: {
+        env?: NodeJS.ProcessEnv;
+        onActivity?: (activity: {
+          owner: string;
+          pid?: number;
+          heartbeatAt: number | null;
+        }) => void;
+      } = {}) => {
+        if (monotonicClock.nowMs < 1_000) {
+          return false;
+        }
+        onActivity?.({
+          owner: "migration-owner",
+          pid: foreign ? 9000 : 8000,
+          heartbeatAt: renew
+            ? 1_000 + Math.floor((monotonicClock.nowMs - 1_000) / 60_000) * 60_000
+            : 1_000,
+        });
+        return true;
+      };
+      const health = await waitForGatewayHealthyRestart({
+        service,
         port: 18789,
-        status: "busy",
-        listeners: [{ pid: 8000 }],
-        hints: [],
+        isStartupMigrationActive,
+        requirePluginHealth: false,
       });
-      callGateway.mockImplementation((opts) =>
-        gatewayHealthResponse({
-          server: { bootId: monotonicClock.nowMs < 30_000 ? "boot-a" : "boot-b" },
-          error: new Error("Gateway health is not ready"),
-        })(opts),
-      );
-    }
-    const isStartupMigrationActive = ({
-      onActivity,
-    }: {
-      env?: NodeJS.ProcessEnv;
-      onActivity?: (activity: { owner: string; pid?: number; heartbeatAt: number | null }) => void;
-    } = {}) => {
-      onActivity?.({
-        owner: "migration-owner",
-        pid: foreign ? 9000 : 8000,
-        heartbeatAt: renew ? monotonicClock.nowMs : 0,
+      expect(health).toMatchObject({
+        healthy: expected === "healthy",
+        waitOutcome: expected,
+        elapsedMs,
       });
-      return true;
-    };
-    const { waitForGatewayHealthyRestart, formatGatewayRestartFailure } =
-      await import("./restart-health.js");
-    const health = await waitForGatewayHealthyRestart({
-      service,
-      port: 18789,
-      isStartupMigrationActive,
-      requirePluginHealth: false,
-    });
-    expect(health).toMatchObject({ healthy: false, waitOutcome: expected, elapsedMs });
-    const message = formatGatewayRestartFailure({ health, port: 18789, defaultTimeoutSeconds: 60 });
-    if (expected === "still-starting") {
-      expect(message.failMessage).toContain("still starting after 300s");
-      expect(message.failMessage).toContain("startup migration");
-      expect(message.failMessage).toContain("openclaw gateway status --deep");
-    } else if (expected === "timeout") {
-      expect(message.failMessage).toBe(
-        "Gateway restart timed out after 60s waiting for health checks.",
-      );
-    }
-  });
+      const message = formatGatewayRestartFailure({
+        health,
+        port: 18789,
+        defaultTimeoutSeconds: 60,
+      });
+      if (expected === "still-starting") {
+        expect(message.failMessage).toContain("still starting after 300s");
+        expect(message.failMessage).toContain("startup migration");
+        expect(message.failMessage).toContain("openclaw gateway status --deep");
+      } else if (expected === "timeout") {
+        expect(message.failMessage).toBe(
+          `Gateway restart timed out after ${elapsedMs / 1000}s waiting for health checks.`,
+        );
+      }
+    },
+  );
 
   it.each([
     { listenerPid: 8000, elapsedMs: 90_000 },
@@ -135,7 +198,6 @@ describe("restart startup progress", () => {
           Math.floor(monotonicClock.nowMs / 30_000) % 2 === 0 ? [] : [{ pid: listenerPid }],
         hints: [],
       }));
-      const { waitForGatewayHealthyRestart } = await import("./restart-health.js");
       const health = await waitForGatewayHealthyRestart({
         service: makeGatewayService({ status: "running", pid: 8000 }),
         port: 18789,

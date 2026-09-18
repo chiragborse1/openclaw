@@ -14,6 +14,7 @@ import { inspectPortUsage } from "../../infra/ports-inspect.js";
 import type { PortUsage } from "../../infra/ports-types.js";
 import {
   hasActiveStartupMigrationLease,
+  STARTUP_MIGRATION_HEARTBEAT_INTERVAL_MS,
   STARTUP_MIGRATION_LEASE_TTL_MS,
 } from "../../infra/startup-migration-checkpoint.js";
 import { sleep } from "../../utils.js";
@@ -370,9 +371,9 @@ export async function waitForGatewayHealthyRestart(params: {
   );
   let migrationActive = false;
   let nextMigrationActivityPollMs = 0;
-  let migrationActivity: { owner: string; heartbeatAt: number | null } | undefined;
+  let migrationActivity: { owner: string; heartbeatAt: number } | undefined;
   let furthestStartupPhase: number | undefined;
-  let lastStartupProgressMs = 0;
+  let startupProgressDeadlineMs = standardDeadlineMs;
   let healthyStreak: { snapshot: GatewayRestartSnapshot; probes: number } | undefined;
   let updateStartupDeadlineMs: number | undefined;
   let observedOwner: string | undefined;
@@ -484,16 +485,20 @@ export async function waitForGatewayHealthyRestart(params: {
           return (params.isStartupMigrationActive ?? hasActiveStartupMigrationLease)({
             env: params.env,
             onActivity: (activity) => {
-              // A live lease alone can be stalled; only this process's renewed heartbeat
-              // demonstrates work. Replacing the lease cannot manufacture progress.
+              if (
+                activity.pid === undefined ||
+                activity.pid !== snapshot.runtime.pid ||
+                activity.heartbeatAt === null
+              ) {
+                return;
+              }
+              // Acquisition earns one heartbeat window; later credit requires renewed
+              // activity from the same lease, not merely a live process.
               migrationProgress =
-                activity.pid !== undefined &&
-                activity.pid === snapshot.runtime.pid &&
-                activity.owner === migrationActivity?.owner &&
-                activity.heartbeatAt !== null &&
-                migrationActivity.heartbeatAt !== null &&
-                activity.heartbeatAt > migrationActivity.heartbeatAt;
-              migrationActivity = activity;
+                migrationActivity === undefined ||
+                (activity.owner === migrationActivity.owner &&
+                  activity.heartbeatAt > migrationActivity.heartbeatAt);
+              migrationActivity = { owner: activity.owner, heartbeatAt: activity.heartbeatAt };
             },
           });
         } catch {
@@ -533,10 +538,21 @@ export async function waitForGatewayHealthyRestart(params: {
     if (
       !healthy &&
       stableRunning &&
+      elapsedMs <= startupProgressDeadlineMs + settleDurationMs &&
       (migrationProgress ||
         (furthestStartupPhase !== undefined && startupPhase > furthestStartupPhase))
     ) {
-      lastStartupProgressMs = elapsedMs;
+      // Include one poll of observation lag after the producer's renewal interval.
+      startupProgressDeadlineMs = Math.max(
+        startupProgressDeadlineMs,
+        elapsedMs +
+          Math.max(
+            standardDeadlineMs,
+            migrationProgress
+              ? STARTUP_MIGRATION_HEARTBEAT_INTERVAL_MS + STARTUP_MIGRATION_ACTIVITY_POLL_MS
+              : 0,
+          ),
+      );
     }
     // A returning listener or replayed hello is not a new phase of startup.
     furthestStartupPhase = Math.max(furthestStartupPhase ?? startupPhase, startupPhase);
@@ -547,15 +563,15 @@ export async function waitForGatewayHealthyRestart(params: {
         boundedDeadlineMs !== undefined
           ? boundedDeadlineMs + settleDurationMs
           : Math.min(
-              (stableRunning ? lastStartupProgressMs : 0) + standardDeadlineMs + settleDurationMs,
+              (stableRunning ? startupProgressDeadlineMs : standardDeadlineMs) + settleDurationMs,
               startupCapMs,
             );
       if (elapsedMs >= deadlineMs) {
         const stillStarting =
           boundedDeadlineMs === undefined &&
           stableRunning &&
-          lastStartupProgressMs > 0 &&
-          elapsedMs - lastStartupProgressMs < standardDeadlineMs &&
+          startupProgressDeadlineMs > standardDeadlineMs &&
+          elapsedMs < startupProgressDeadlineMs &&
           elapsedMs >= startupCapMs;
         return withWaitContext(
           snapshot,

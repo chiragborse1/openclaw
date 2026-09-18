@@ -89,6 +89,7 @@ vi.mock("../../gateway/probe-auth.js", () => ({
 vi.mock("../../infra/startup-migration-checkpoint.js", () => ({
   hasActiveStartupMigrationLease: (params: unknown) => hasActiveStartupMigrationLease(params),
   STARTUP_MIGRATION_LEASE_TTL_MS: 5 * 60_000,
+  STARTUP_MIGRATION_HEARTBEAT_INTERVAL_MS: 60_000,
 }));
 
 vi.mock("../../infra/gateway-owner-lease.js", () => ({
