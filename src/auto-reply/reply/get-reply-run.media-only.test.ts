@@ -498,6 +498,13 @@ function runPrepared(overrides: Partial<Parameters<typeof runPreparedReply>[0]> 
   return runPreparedReply(baseParams(overrides));
 }
 
+async function useActualSystemEventDrain() {
+  const actual = await vi.importActual<typeof import("./session-system-events.js")>(
+    "./session-system-events.js",
+  );
+  vi.mocked(drainFormattedSystemEvents).mockImplementation(actual.drainFormattedSystemEvents);
+}
+
 function ownerParams(): Parameters<typeof runPreparedReply>[0] {
   const params = baseParams();
   params.command = {
@@ -3601,12 +3608,7 @@ describe("runPreparedReply media-only handling", () => {
   });
   it("keeps route and dispatch system events queued when busy admission returns", async () => {
     vi.useFakeTimers();
-    const actualSystemEvents = await vi.importActual<typeof import("./session-system-events.js")>(
-      "./session-system-events.js",
-    );
-    vi.mocked(drainFormattedSystemEvents).mockImplementation(
-      actualSystemEvents.drainFormattedSystemEvents,
-    );
+    await useActualSystemEventDrain();
     const queueSettings = await import("./queue/settings-runtime.js");
     vi.mocked(queueSettings.resolveQueueSettings).mockReturnValueOnce({ mode: "interrupt" });
     const routeSessionKey = "agent:main:slack:channel:c123";
@@ -3658,15 +3660,11 @@ describe("runPreparedReply media-only handling", () => {
     nextRun.complete();
   });
   it("drains system events only after waiting behind an active run", async () => {
-    const actualSystemEvents = await vi.importActual<typeof import("./session-system-events.js")>(
-      "./session-system-events.js",
-    );
-    vi.mocked(drainFormattedSystemEvents).mockImplementation(
-      actualSystemEvents.drainFormattedSystemEvents,
-    );
+    await useActualSystemEventDrain();
     const queueSettings = await import("./queue/settings-runtime.js");
     vi.mocked(queueSettings.resolveQueueSettings).mockReturnValueOnce({ mode: "interrupt" });
-    enqueueSystemEvent("System event after active run", { sessionKey: "session-key" });
+    const queueKey = "agent:default:session-key";
+    enqueueSystemEvent("System event after active run", { sessionKey: queueKey });
 
     const previousRun = createReplyOperation({
       sessionId: "session-events-after-wait",
@@ -3684,7 +3682,7 @@ describe("runPreparedReply media-only handling", () => {
     });
 
     await Promise.resolve();
-    expect(peekSystemEventEntries("session-key").map((event) => event.text)).toEqual([
+    expect(peekSystemEventEntries(queueKey).map((event) => event.text)).toEqual([
       "System event after active run",
     ]);
     previousRun.complete();
@@ -3701,7 +3699,7 @@ describe("runPreparedReply media-only handling", () => {
     expect(call?.transcriptCommandBody).not.toContain("System event after active run");
     expect(call.followupRun.prompt).toBe("[User sent media without caption]");
     expect(call?.followupRun.transcriptPrompt).not.toContain("System event after active run");
-    expect(peekSystemEventEntries("session-key")).toStrictEqual([]);
+    expect(peekSystemEventEntries(queueKey)).toStrictEqual([]);
   });
 
   it("threads inbound context as current-turn context without changing transcript text", async () => {
@@ -5230,12 +5228,7 @@ describe("runPreparedReply media-only handling", () => {
   it.each(["live", "replaced", "absent"] as const)(
     "respects the heartbeat admission selection when it is %s",
     async (selection) => {
-      const actualSystemEvents = await vi.importActual<typeof import("./session-system-events.js")>(
-        "./session-system-events.js",
-      );
-      vi.mocked(drainFormattedSystemEvents).mockImplementation(
-        actualSystemEvents.drainFormattedSystemEvents,
-      );
+      await useActualSystemEventDrain();
       const queueKey = "agent:main:main:heartbeat:heartbeat";
       const runKey = "agent:main:main:heartbeat";
       const generic = expectDefined(
@@ -5304,12 +5297,7 @@ describe("runPreparedReply media-only handling", () => {
   );
 
   it("includes route system events in a thread-scoped turn", async () => {
-    const actualSystemEvents = await vi.importActual<typeof import("./session-system-events.js")>(
-      "./session-system-events.js",
-    );
-    vi.mocked(drainFormattedSystemEvents).mockImplementation(
-      actualSystemEvents.drainFormattedSystemEvents,
-    );
+    await useActualSystemEventDrain();
     enqueueSystemEvent("Slack reaction added: :eyes:", {
       sessionKey: "agent:main:slack:channel:c123",
     });
