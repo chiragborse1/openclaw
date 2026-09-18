@@ -1,5 +1,8 @@
 import { supportsOpenAIReasoningEffort } from "@openclaw/ai/internal/openai";
-import { resolveClaudeSonnet5ModelIdentity } from "@openclaw/llm-core";
+import {
+  resolveClaudeOpus5ModelIdentity,
+  resolveClaudeSonnet5ModelIdentity,
+} from "@openclaw/llm-core";
 /**
  * Simple completion runtime preparation.
  *
@@ -408,7 +411,9 @@ function normalizeSimpleCompletionReasoning(
     case undefined:
       return undefined;
     case "off":
-      return resolveClaudeSonnet5ModelIdentity(model) ? "off" : undefined;
+      return resolveClaudeSonnet5ModelIdentity(model) || resolveClaudeOpus5ModelIdentity(model)
+        ? "off"
+        : undefined;
     case "adaptive":
       return "medium";
     case "ultra":

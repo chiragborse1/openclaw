@@ -2372,4 +2372,32 @@ describe("Anthropic provider", () => {
       expect(capturedPayload).not.toHaveProperty("output_config");
     }
   });
+
+  it("defaults Claude Opus 5 simple requests to adaptive high", async () => {
+    let capturedPayload: Record<string, unknown> | undefined;
+    const stream = streamSimpleAnthropic(
+      makeAnthropicModel({
+        id: "claude-opus-5",
+        name: "Claude Opus 5",
+        maxTokens: 128_000,
+      }),
+      makeSonnet5PrefillContext(),
+      {
+        apiKey: "sk-ant-provider",
+        onPayload: (payload) => {
+          capturedPayload = payload as unknown as Record<string, unknown>;
+          throw new Error("stop before network");
+        },
+      },
+    );
+
+    await stream.result();
+
+    expect(capturedPayload).toMatchObject({
+      max_tokens: 128_000,
+      messages: [{ role: "user" }],
+      thinking: { type: "adaptive", display: "summarized" },
+      output_config: { effort: "high" },
+    });
+  });
 });

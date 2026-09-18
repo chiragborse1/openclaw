@@ -2,34 +2,32 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+type AnthropicManifestModel = {
+  id?: string;
+  name?: string;
+  reasoning?: boolean;
+  input?: string[];
+  mediaInput?: {
+    image?: {
+      maxSidePx?: number;
+      preferredSidePx?: number;
+      tokenMode?: string;
+    };
+  };
+  contextWindow?: number;
+  maxTokens?: number;
+  cost?: {
+    input?: number;
+    output?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+  };
+  thinkingLevelMap?: Record<string, string | null>;
+};
+
 type AnthropicManifest = {
   modelCatalog?: {
-    providers?: {
-      anthropic?: {
-        models?: Array<{
-          id?: string;
-          name?: string;
-          reasoning?: boolean;
-          input?: string[];
-          mediaInput?: {
-            image?: {
-              maxSidePx?: number;
-              preferredSidePx?: number;
-              tokenMode?: string;
-            };
-          };
-          contextWindow?: number;
-          maxTokens?: number;
-          cost?: {
-            input?: number;
-            output?: number;
-            cacheRead?: number;
-            cacheWrite?: number;
-          };
-          thinkingLevelMap?: Record<string, string | null>;
-        }>;
-      };
-    };
+    providers?: Record<string, { models?: AnthropicManifestModel[] }>;
     discovery?: Record<string, string>;
   };
 };
@@ -39,11 +37,10 @@ const manifest = JSON.parse(
 ) as AnthropicManifest;
 
 describe("Anthropic plugin manifest", () => {
-  it("publishes Opus 5 and Fable 5.1", () => {
+  it("publishes Opus 5 without advertising prefix-bound Fable 5.1", () => {
     const models = manifest.modelCatalog?.providers?.anthropic?.models ?? [];
-    expect(models.map((model) => model.id)).toEqual(
-      expect.arrayContaining(["claude-opus-5", "claude-fable-5-1"]),
-    );
+    expect(models.map((model) => model.id)).toContain("claude-opus-5");
+    expect(models.map((model) => model.id)).not.toContain("claude-fable-5-1");
   });
 
   it("publishes the exact Claude Sonnet 5 API contract", () => {
@@ -60,6 +57,29 @@ describe("Anthropic plugin manifest", () => {
       contextWindow: 1_000_000,
       maxTokens: 128_000,
       thinkingLevelMap: { xhigh: "xhigh", max: "max" },
+    });
+  });
+
+  it("publishes the exact Claude Opus 5 API contract", () => {
+    const models = manifest.modelCatalog?.providers?.anthropic?.models ?? [];
+    expect(models.find((model) => model.id === "claude-opus-5")).toMatchObject({
+      id: "claude-opus-5",
+      name: "Claude Opus 5",
+      reasoning: true,
+      input: ["text", "image"],
+      mediaInput: {
+        image: { maxSidePx: 2576, preferredSidePx: 2576, tokenMode: "provider" },
+      },
+      cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      thinkingLevelMap: { xhigh: "xhigh", max: "max" },
+    });
+    // Opus 5's 1M window is the model default, so the CLI row is not clamped to 200k.
+    const cliModels = manifest.modelCatalog?.providers?.["claude-cli"]?.models ?? [];
+    expect(cliModels.find((model) => model.id === "claude-opus-5")).toMatchObject({
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
     });
   });
 

@@ -47,8 +47,9 @@ import {
 } from "./anthropic-auth-headers.js";
 import {
   applyClaudeRequestContract,
-  prepareClaudeSonnet5RequestContext,
+  prepareClaudeNoPrefillRequestContext,
   resolveClaudeNativeThinkingLevelMap,
+  resolveClaudeOpus5ModelIdentity,
   resolveClaudeSonnet5ModelIdentity,
   requiresClaudeAdaptiveThinking,
   supportsClaudeAdaptiveThinking,
@@ -504,7 +505,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
   options?: AnthropicOptions,
 ) => {
   const stream = new AssistantMessageEventStream();
-  const requestContext = prepareClaudeSonnet5RequestContext(model, context);
+  const requestContext = prepareClaudeNoPrefillRequestContext(model, context);
   const requestOptions = normalizeAnthropicThinkingOptions(model, options);
 
   void (async () => {
@@ -1064,7 +1065,7 @@ export const streamSimpleAnthropic: StreamFunction<
         ? "low"
         : "high"
       : options?.reasoning;
-  if (resolveClaudeSonnet5ModelIdentity(model)) {
+  if (resolveClaudeSonnet5ModelIdentity(model) || resolveClaudeOpus5ModelIdentity(model)) {
     return streamAnthropic(model, context, {
       ...base,
       thinkingEnabled: true,

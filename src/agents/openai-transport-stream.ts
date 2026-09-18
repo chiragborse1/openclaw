@@ -21,6 +21,7 @@ import {
   projectOpenAITools,
   reconcileOpenAICompletionsToolChoice,
   reconcileOpenAIResponsesToolChoice,
+  resolveOpenAIResponsesCacheParams,
   resolveAzureDeploymentNameFromMap,
   resolveOpenAIProjectedToolsStrictToolFlag,
   resolveOpenAIReasoningEffortForModel,
@@ -2150,16 +2151,6 @@ function resolvePromptCacheKey(
   return clampOpenAIPromptCacheKey(options?.promptCacheKey ?? options?.sessionId);
 }
 
-function getPromptCacheRetention(
-  baseUrl: string | undefined,
-  cacheRetention: "short" | "long" | "none",
-) {
-  if (cacheRetention !== "long") {
-    return undefined;
-  }
-  return baseUrl?.includes("api.openai.com") ? "24h" : undefined;
-}
-
 function resolveOpenAIReasoningEffort(
   options: OpenAIResponsesOptions | undefined,
 ): OpenAIApiReasoningEffort {
@@ -2376,7 +2367,11 @@ export function buildOpenAIResponsesParams(
     input: messages,
     stream: true,
     prompt_cache_key: promptCacheKey,
-    prompt_cache_retention: getPromptCacheRetention(model.baseUrl, cacheRetention),
+    ...resolveOpenAIResponsesCacheParams(
+      model,
+      cacheRetention,
+      compat.supportsLongCacheRetention !== false,
+    ),
     ...(isCodexResponses
       ? { instructions: resolveOpenAICodexResponsesInstructions(model, context) }
       : {}),
@@ -3691,6 +3686,7 @@ type OpenAIResponsesRequestParams = {
   instructions?: string;
   prompt_cache_key?: string;
   prompt_cache_retention?: "24h";
+  prompt_cache_options?: { ttl: "30m" };
   metadata?: Record<string, string>;
   store?: boolean;
   max_output_tokens?: number;

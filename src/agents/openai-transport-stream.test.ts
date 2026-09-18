@@ -4009,6 +4009,53 @@ describe("openai transport stream", () => {
     expect(params.prompt_cache_key).toBeUndefined();
   });
 
+  it.each(["short", "long"] as const)(
+    "uses Astra's native 30-minute Responses cache option for %s retention",
+    (cacheRetention) => {
+      const params = buildOpenAIResponsesParams(
+        {
+          id: "gpt-6-astra",
+          name: "GPT-6 Astra",
+          api: "openai-responses",
+          provider: "openai",
+          baseUrl: "https://api.openai.com/v1",
+          reasoning: true,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 400000,
+          maxTokens: 128000,
+        } satisfies Model<"openai-responses">,
+        { systemPrompt: "system", messages: [], tools: [] } as never,
+        { sessionId: "astra-session", cacheRetention },
+      ) as Record<string, unknown>;
+
+      expect(params.prompt_cache_options).toEqual({ ttl: "30m" });
+      expect(params).not.toHaveProperty("prompt_cache_retention");
+    },
+  );
+
+  it("keeps legacy long retention for Astra on custom Responses endpoints", () => {
+    const params = buildOpenAIResponsesParams(
+      {
+        id: "gpt-6-astra",
+        name: "GPT-6 Astra",
+        api: "openai-responses",
+        provider: "openai",
+        baseUrl: "https://proxy.example.com/v1",
+        reasoning: true,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 400000,
+        maxTokens: 128000,
+      } satisfies Model<"openai-responses">,
+      { systemPrompt: "system", messages: [], tools: [] } as never,
+      { sessionId: "astra-session", cacheRetention: "long" },
+    ) as Record<string, unknown>;
+
+    expect(params.prompt_cache_retention).toBe("24h");
+    expect(params).not.toHaveProperty("prompt_cache_options");
+  });
+
   it("adds fallback instructions for raw native Codex responses probes", () => {
     const params = buildOpenAIResponsesParams(
       {

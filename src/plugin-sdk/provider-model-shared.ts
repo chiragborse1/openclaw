@@ -31,6 +31,7 @@ export {
   resolveClaudeModelIdentity,
   resolveClaudeMythos5ModelIdentity,
   resolveClaudeNativeThinkingLevelMap,
+  resolveClaudeOpus5ModelIdentity,
   resolveClaudeSonnet5ModelIdentity,
   requiresClaudeDefaultSampling,
   requiresClaudeMandatoryAdaptiveThinking,

@@ -31,6 +31,7 @@ import {
   resolveClaudeFable5ModelIdentity,
   resolveClaudeModelIdentity,
   resolveClaudeMythos5ModelIdentity,
+  resolveClaudeOpus5ModelIdentity,
   resolveClaudeSonnet5ModelIdentity,
   resolveClaudeThinkingProfile,
   supportsClaudeAdaptiveThinking,
@@ -391,15 +392,28 @@ function isAnthropicSonnet5Model(modelId: string): boolean {
   return resolveClaudeSonnet5ModelIdentity({ id: modelId }) !== undefined;
 }
 
+function isAnthropicOpus5Model(modelId: string): boolean {
+  return resolveClaudeOpus5ModelIdentity({ id: modelId }) !== undefined;
+}
+
+// Claude 5 models ship 1M context as the model default (no [1m] CLI opt-in).
+function isAnthropicExact1MClaude5Model(modelId: string): boolean {
+  return (
+    isAnthropicMandatoryClaude5Model(modelId) ||
+    isAnthropicSonnet5Model(modelId) ||
+    isAnthropicOpus5Model(modelId)
+  );
+}
+
 function resolveAnthropicFixedContextWindow(modelId: string): number | undefined {
-  if (isAnthropicMandatoryClaude5Model(modelId) || isAnthropicSonnet5Model(modelId)) {
+  if (isAnthropicExact1MClaude5Model(modelId)) {
     return ANTHROPIC_EXACT_1M_CONTEXT_TOKENS;
   }
   return isAnthropicGa1MModel(modelId) ? ANTHROPIC_GA_1M_CONTEXT_TOKENS : undefined;
 }
 
 function isAnthropic128kOutputModel(modelId: string): boolean {
-  if (isAnthropicMandatoryClaude5Model(modelId) || isAnthropicSonnet5Model(modelId)) {
+  if (isAnthropicExact1MClaude5Model(modelId)) {
     return true;
   }
   return /^claude-opus-4-8(?=$|[^a-z0-9])/.test(resolveClaudeModelIdentity({ id: modelId }));
@@ -469,9 +483,7 @@ function applyAnthropicFixedContextWindow(params: {
   if (hasConfiguredModelContextOverride(params.config, params.provider, params.modelId)) {
     return undefined;
   }
-  const exactContextWindow =
-    isAnthropicMandatoryClaude5Model(params.contractModelId) ||
-    isAnthropicSonnet5Model(params.contractModelId);
+  const exactContextWindow = isAnthropicExact1MClaude5Model(params.contractModelId);
   const nextContextWindow = exactContextWindow
     ? fixedContextWindow
     : Math.max(params.model.contextWindow ?? 0, fixedContextWindow);
@@ -617,9 +629,7 @@ function normalizeAnthropicResolvedModel(
     return undefined;
   }
   const contractModel =
-    (isAnthropicMandatoryClaude5Model(contractModelId) ||
-      isAnthropicSonnet5Model(contractModelId)) &&
-    !ctx.model.reasoning
+    isAnthropicExact1MClaude5Model(contractModelId) && !ctx.model.reasoning
       ? { ...ctx.model, reasoning: true }
       : ctx.model;
   const imageCapableModel =
