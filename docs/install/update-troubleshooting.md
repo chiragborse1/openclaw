@@ -145,6 +145,40 @@ Inside a container, the same next action also directs you to pull or build the
 target OpenClaw image and redeploy with the same state/config mounts. Package
 changes inside a running container are not durable.
 
+## Published 2026.9.4 on large agent fleets
+
+Published OpenClaw 2026.9.4 can spend many minutes preparing model catalogs and
+chat metadata after its HTTP listener binds. In an instrumented 480-agent
+control with no update, HTTP probes remained unanswered during 944 seconds of
+observation; the Gateway then logged `ready` at 947.5 seconds. Stopping that
+instance eventually required systemd's existing 5-minute-30-second stop limit.
+These are measurements of one synthetic fixture, not expected startup budgets.
+
+A separate failed-update reproduction retained the original package and PID but
+lost HTTP responsiveness for at least 25 minutes after the failure. Its cause
+remains unresolved: the plain-start control did not reproduce the same
+ready-to-unresponsive transition, and the failed run lacked live-state
+before/after evidence. A retained package, PID, or `serviceRestartSafe: true`
+does not establish that the previous Gateway is serving.
+See [the investigation](https://github.com/openclaw/openclaw/issues/151295).
+
+Before recovery, preserve the update report and a
+[verified backup](/install/updating/rollback-and-recovery#before-updating-create-a-verified-backup).
+Keep the same service account, profile, package manager, and installation prefix.
+Have that installation's owner stop the Gateway and other writers before manual
+replacement. When the installed updater cannot complete, use the
+[manual package-manager procedure](/install/updating/update-methods#alternative-manual-npm-pnpm-or-bun)
+with an exact target compatible with the retained state, then run the target's
+`openclaw doctor --fix` before starting its Gateway. If the retained binary
+cannot read the current state, follow
+[backup recovery](/install/updating/rollback-and-recovery#downgrade); changing
+schema markers or deleting lease rows does not reverse migrations.
+
+Verify the actual serving version/build through an authenticated Gateway RPC
+and check `/readyz` before declaring recovery or removing backups. The
+plain-start control did not verify these recovery steps or establish that
+restarting the same 2026.9.4 fleet resolves the failed-update condition.
+
 ## Plugin repair warnings
 
 Doctor's configured-plugin repair and payload-verification warnings do not block

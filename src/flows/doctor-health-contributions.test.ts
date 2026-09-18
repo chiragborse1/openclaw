@@ -2654,6 +2654,7 @@ describe("doctor health contributions", () => {
       configPath: "/tmp/openclaw.json",
     });
 
+    await requireDoctorContribution("doctor:auth-profile-migration").run(ctx);
     await contribution.run(ctx);
 
     expect(mocks.maybeRepairLegacyOAuthSidecarProfiles).toHaveBeenCalledWith({
@@ -2723,6 +2724,7 @@ describe("doctor health contributions", () => {
       options: { nonInteractive: true },
     });
 
+    await requireDoctorContribution("doctor:auth-profile-migration").run(ctx);
     await contribution.run(ctx);
 
     expect(mocks.replaceConfigFile).toHaveBeenCalledWith(
@@ -2762,6 +2764,7 @@ describe("doctor health contributions", () => {
       prompter: buildDoctorPrompter(true),
     });
 
+    await requireDoctorContribution("doctor:auth-profile-migration").run(ctx);
     await contribution.run(ctx);
 
     expect(mocks.replaceConfigFile).not.toHaveBeenCalled();
@@ -2771,7 +2774,7 @@ describe("doctor health contributions", () => {
   });
 
   it("persists provider runtime mappings added while removing retired auth profiles", async () => {
-    const contribution = requireDoctorContribution("doctor:auth-profiles");
+    const contribution = requireDoctorContribution("doctor:auth-profile-migration");
     const cfg = {
       agents: { defaults: { models: { "anthropic/claude-sonnet-4-6": {} } } },
     };

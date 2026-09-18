@@ -89,6 +89,7 @@ async function runDoctorHealthFlowWithResult(
     ReturnType<typeof import("../commands/doctor-maintenance.js").beginDoctorMaintenance>
   >;
   let exitCode: number | undefined;
+  let healthContext: DoctorHealthFlowContext | undefined;
   let doctorResult: UpdatePostInstallDoctorResult = { status: "error" };
   try {
     const { beginDoctorMaintenance } = await import("../commands/doctor-maintenance.js");
@@ -198,9 +199,15 @@ async function runDoctorHealthFlowWithResult(
         stateDirExistedAtStart,
         gatewayMaintenanceActive: maintenance !== undefined,
         agentDatabaseRefusals,
+        preparedAgentCount: Math.max(
+          admissionSchemas.agentDatabaseMigrationDiscovery?.configuredAgentDatabaseTargets.length ??
+            0,
+          admissionSchemas.agentDatabaseMigrationDiscovery?.registeredAgentDatabases.length ?? 0,
+        ),
         runWithPluginMetadataSnapshot: configResult.runWithPluginMetadataSnapshot,
         invalidatePluginMetadataSnapshot: configResult.invalidatePluginMetadataSnapshot,
       };
+      healthContext = ctx;
       const { runDoctorHealthContributions } = await import("./doctor-health-contributions.js");
       await runDoctorHealthContributions(ctx);
       if (ctx.configWriteRefusal) {
@@ -275,7 +282,6 @@ async function runDoctorHealthFlowWithResult(
           : [],
       ),
       ...(ctx.postInstallDoctorResult?.warnings ?? []),
-      ...(ctx.updateWarnings ?? []),
     ]);
     doctorResult = {
       ...(ctx.postInstallDoctorResult ?? { status: "ok" }),
@@ -340,10 +346,15 @@ async function runDoctorHealthFlowWithResult(
         for (const change of updateResult.capture.configChanges) {
           createSubsystemLogger("update").warn(formatUpdateDoctorConfigChange(change));
         }
+        const warnings = normalizeUpdatePostInstallDoctorWarnings([
+          ...(doctorResult.warnings ?? []),
+          ...(healthContext?.updateWarnings ?? []),
+        ]);
         await writeUpdatePostInstallDoctorResult({
           resultPath: updateResult.resultPath,
           result: {
             ...doctorResult,
+            ...(warnings.length ? { warnings } : {}),
             ...(updateResult.capture.configChanges.length
               ? { configChanges: updateResult.capture.configChanges }
               : {}),

@@ -12,6 +12,7 @@ import type { UpdatePostInstallDoctorResult } from "../infra/update-doctor-resul
 import type { PluginMetadataSnapshotScopeRunner } from "../plugins/current-plugin-metadata-snapshot.js";
 import type { RuntimeEnv } from "../runtime.js";
 import type { AgentDatabaseAdmissionRefusal } from "../state/agent-database-admission.js";
+import type { DoctorUpdateBudget, DoctorUpdateWork } from "./doctor-update-budget.js";
 import type { DoctorHealthCheck } from "./health-check-runner-types.js";
 import type { HealthCheckContext } from "./health-checks.js";
 import type { FlowContribution } from "./types.js";
@@ -75,6 +76,9 @@ export type DoctorHealthFlowContext = {
   /** State migration owns service activation until final readiness passes. */
   gatewayMaintenanceActive?: boolean;
   agentDatabaseRefusals?: readonly AgentDatabaseAdmissionRefusal[];
+  preparedAgentCount?: number;
+  updateBudget?: DoctorUpdateBudget;
+  authProfileHealthReady?: boolean;
   gatewayDetails?: ReturnType<typeof buildGatewayConnectionDetails>;
   healthOk?: boolean;
   gatewayHealthAuthenticated?: boolean;
@@ -98,7 +102,7 @@ export type DoctorHealthContribution = FlowContribution & {
   surface: "health";
   required?: true;
   /** Diagnostics with no update migration or readiness dependency stay in standalone Doctor. */
-  updatePolicy?: "standalone";
+  updateWork?: DoctorUpdateWork;
   healthChecks: readonly DoctorHealthCheck[];
   healthCheckIds: readonly string[];
   run: (ctx: DoctorHealthFlowContext) => Promise<void>;

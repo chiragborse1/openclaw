@@ -19,6 +19,10 @@ import {
   selectUpdateReadinessChecks,
   type DoctorLintRunOptions,
 } from "../flows/doctor-lint-flow.js";
+import {
+  admitDoctorUpdateInspection,
+  resolveDoctorUpdateBudget,
+} from "../flows/doctor-update-budget.js";
 import { listExtensionHealthChecksForDoctor } from "../flows/health-check-registry.js";
 import {
   healthFindingMeetsSeverity,
@@ -32,6 +36,7 @@ import {
   type DeferredPluginMigration,
 } from "../infra/deferred-plugin-migrations.js";
 import { prepareSqliteReadOnlyLocationSync } from "../infra/sqlite-snapshot-source.js";
+import { resolveUpdateRehearsalRoot } from "../infra/update-rehearsal-paths.js";
 import {
   resolvePluginInstallRoots,
   withPluginInstallRoots,
@@ -135,6 +140,43 @@ async function prepareDoctorLintExecution(
   }
   maybeLoadDotEnvForConfig(process.env);
   const sourceEnv = { ...process.env };
+  if (resolveUpdateRehearsalRoot(sourceEnv) && !opts.onlyIds?.length) {
+    // The preceding repair and following config/plugin/startup gates own required
+    // admission. Lint is advisory inspection; admit it before plugin registration
+    // or private inspection snapshots consume the old driver's shared budget.
+    const snapshot = await createConfigIO({
+      env: sourceEnv,
+      observe: false,
+      pluginValidation: "core-only",
+    }).readConfigFileSnapshot();
+    if (snapshot.valid) {
+      const budget = await resolveDoctorUpdateBudget({ cfg: snapshot.config, env: sourceEnv });
+      if (
+        budget &&
+        !admitDoctorUpdateInspection(budget, "agent", [
+          { id: "core/doctor/lint-inspection", label: "Doctor lint inspection" },
+        ])
+      ) {
+        const warnings = [...budget.deferred.values()];
+        return {
+          exitCode: 0,
+          findings: warnings,
+          writeOutput() {
+            if (detectMode(opts) === "json") {
+              writeJsonResult({ ok: true, checksRun: 0, checksSkipped: 0, findings: [], warnings });
+            } else {
+              for (const finding of warnings) {
+                runtime.log(
+                  `[warning] ${finding.checkId} [${finding.errorCode}]: ${finding.message}`,
+                );
+                runtime.log(finding.fixHint ?? "Run `openclaw doctor` after activation.");
+              }
+            }
+          },
+        };
+      }
+    }
+  }
   const cleanupWarnings: HealthFinding[] | undefined = isUpdateDoctorLintPass(sourceEnv)
     ? []
     : undefined;

@@ -52,6 +52,7 @@ it("shares one fleet preflight with Doctor admission and its health contribution
     const admission = resolveInitialDoctorHealthContributions({
       runStructuredHealthRepairs: noOp,
       runGatewayConfigHealth: noOp,
+      runAuthProfileMigration: noOp,
       runAuthProfileHealth: noOp,
       runGatewayAuthHealth: noOp,
       runLegacyStateHealth: noOp,
@@ -133,6 +134,7 @@ it.each(["copy", "hardlink", "relocated-copy"] as const)(
       const admission = resolveInitialDoctorHealthContributions({
         runStructuredHealthRepairs: noOp,
         runGatewayConfigHealth: noOp,
+        runAuthProfileMigration: noOp,
         runAuthProfileHealth: noOp,
         runGatewayAuthHealth: noOp,
         runLegacyStateHealth: noOp,
