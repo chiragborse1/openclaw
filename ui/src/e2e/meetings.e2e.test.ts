@@ -43,6 +43,180 @@ const detail: TranscriptsGetResult = {
 };
 
 suite.define(() => {
+  it("follows live speech and delayed meeting notes without a manual refresh", async () => {
+    await suite.withPage(
+      { viewport: { width: 1440, height: 1000 }, timezoneId: "UTC", colorScheme: "light" },
+      async ({ page }) => {
+        const activeMeeting: TranscriptSessionSummary = {
+          ...meeting,
+          selector: "2026-09-18/product-huddle",
+          sessionId: "product-huddle",
+          title: "Product huddle",
+          startedAt: "2026-09-18T16:00:00Z",
+          stoppedAt: undefined,
+          updatedAt: "2026-09-18T16:00:00Z",
+          lastUtteranceAt: null,
+          active: true,
+          activeSubscription: true,
+          utteranceCount: 0,
+          participants: [],
+          hasSummary: false,
+          summarySource: undefined,
+          overview: undefined,
+        };
+        const initial: TranscriptsGetResult = {
+          session: activeMeeting,
+          utterances: [],
+          nextCursor: null,
+        };
+        const gateway = await installMockGateway(page, {
+          methodResponses: {
+            "transcripts.list": { sessions: [activeMeeting, meeting], nextCursor: null },
+            "transcripts.get": initial,
+          },
+        });
+        await page.goto(
+          `${suite.server.baseUrl}meetings?selector=${encodeURIComponent(activeMeeting.selector)}`,
+        );
+        const view = page.locator("openclaw-meetings-page");
+        const reader = view.locator(".transcripts-reader");
+        const row = view.getByRole("link", { name: /Product huddle/ });
+        await reader.getByRole("heading", { name: "Product huddle", exact: true }).waitFor();
+        await expect.poll(() => reader.getAttribute("aria-busy")).toBe("false");
+        await page.screenshot({
+          path: path.join(suite.artifactDir, "meetings-live-initial.png"),
+          animations: "disabled",
+        });
+        expect(
+          await view.getByRole("tab", { name: "Transcript" }).getAttribute("aria-selected"),
+        ).toBe("true");
+        expect(await reader.getByText("Live capture", { exact: true }).isVisible()).toBe(true);
+        expect(await reader.getByText("Waiting for speech…", { exact: true }).isVisible()).toBe(
+          true,
+        );
+
+        const speech: TranscriptsGetResult = {
+          ...initial,
+          session: {
+            ...activeMeeting,
+            utteranceCount: 2,
+            participants: ["Ada", "Sam"],
+            updatedAt: "2026-09-18T16:00:12Z",
+            lastUtteranceAt: "2026-09-18T16:00:12Z",
+          },
+          utterances: [
+            {
+              sequence: 0,
+              speakerLabel: "Ada",
+              startedAt: "2026-09-18T16:00:05Z",
+              text: "Let's make the setup easier to follow.",
+              final: true,
+            },
+            {
+              sequence: 1,
+              speakerLabel: "Sam",
+              startedAt: "2026-09-18T16:00:12Z",
+              text: "I can test keyboard navigation this afternoon.",
+              final: true,
+            },
+          ],
+        };
+        await gateway.setMethodResponse("transcripts.get", speech);
+        await gateway.setMethodResponse("transcripts.list", {
+          sessions: [speech.session, meeting],
+          nextCursor: null,
+        });
+        await reader.getByText(speech.utterances![1]!.text, { exact: true }).waitFor();
+        expect(
+          await reader.locator(".transcripts-utterance__byline strong").allTextContents(),
+        ).toEqual(["Ada", "Sam"]);
+        await expect.poll(() => row.textContent()).toContain("2 saved utterances");
+        expect((await gateway.getRequests("transcripts.list")).length).toBeGreaterThan(1);
+        await page.screenshot({
+          path: path.join(suite.artifactDir, "meetings-live-speech.png"),
+          animations: "disabled",
+        });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        expect(await reader.getByText("Live capture", { exact: true }).isVisible()).toBe(true);
+        expect(
+          await reader.getByText(speech.utterances![1]!.text, { exact: true }).isVisible(),
+        ).toBe(true);
+        expect(
+          await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+        ).toBe(true);
+        await reader.scrollIntoViewIfNeeded();
+        await page.screenshot({
+          path: path.join(suite.artifactDir, "meetings-live-mobile-reduced-motion.png"),
+          animations: "disabled",
+        });
+        await page.setViewportSize({ width: 1440, height: 1000 });
+        await page.emulateMedia({ reducedMotion: "no-preference" });
+
+        await view.getByRole("tab", { name: "Summary", exact: true }).click();
+        expect(new URL(page.url()).searchParams.get("tab")).toBe("summary");
+        const completed: TranscriptsGetResult = {
+          ...speech,
+          session: {
+            ...speech.session,
+            active: false,
+            activeSubscription: false,
+            stoppedAt: "2026-09-18T16:05:00Z",
+            updatedAt: "2026-09-18T16:05:00Z",
+          },
+        };
+        await gateway.setMethodResponse("transcripts.get", completed);
+        await gateway.setMethodResponse("transcripts.list", {
+          sessions: [completed.session, meeting],
+          nextCursor: null,
+        });
+        await expect.poll(() => reader.getByText("Live capture", { exact: true }).count()).toBe(0);
+        expect(await view.getByRole("tab", { name: "Summary" }).getAttribute("aria-selected")).toBe(
+          "true",
+        );
+        await page.screenshot({
+          path: path.join(suite.artifactDir, "meetings-awaiting-notes.png"),
+          animations: "disabled",
+        });
+        const notes: TranscriptsGetResult = {
+          ...completed,
+          session: {
+            ...completed.session,
+            hasSummary: true,
+            summarySource: "heuristic",
+            overview: "The team agreed to simplify setup and verify keyboard navigation.",
+          },
+          summary: {
+            generatedAt: "2026-09-18T16:05:04Z",
+            overview: "The team agreed to simplify setup and verify keyboard navigation.",
+            decisions: ["Simplify setup."],
+            actionItems: ["Sam will test keyboard navigation."],
+            risks: [],
+            participants: ["Ada", "Sam"],
+            utteranceCount: 2,
+            source: "heuristic",
+            markdown:
+              "# Product huddle\n\n## Overview\nThe team agreed to simplify setup and verify keyboard navigation.\n\n## Action items\n- Sam will test keyboard navigation.",
+          },
+        };
+        await gateway.setMethodResponse("transcripts.get", notes);
+        await gateway.setMethodResponse("transcripts.list", {
+          sessions: [notes.session, meeting],
+          nextCursor: null,
+        });
+        await reader.getByText(notes.summary!.overview, { exact: true }).waitFor();
+        await expect.poll(() => row.textContent()).toContain(notes.summary!.overview);
+        expect(await view.getByRole("tab", { name: "Summary" }).getAttribute("aria-selected")).toBe(
+          "true",
+        );
+        await page.screenshot({
+          path: path.join(suite.artifactDir, "meetings-completed-notes.png"),
+          animations: "disabled",
+        });
+      },
+    );
+  });
+
   it("groups meetings, marks silent captures, and opens shareable notes without duplicate transcripts", async () => {
     await suite.withPage(
       { viewport: { width: 1440, height: 1000 }, timezoneId: "UTC", colorScheme: "light" },

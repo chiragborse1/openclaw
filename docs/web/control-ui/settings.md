@@ -506,16 +506,28 @@ Meeting transcripts are separate from agent chat-history search in **Sessions**.
 Each page contains up to 50 meetings, grouped by local day with newest first.
 Rows show participant previews, duration, an overview when available, and distinct
 **In progress** and **No speech captured** states. Search by title or session/source ID, then
-select a meeting. Existing `/meetings?selector=...` links open its saved summary. Meeting URLs are
+select a meeting. Existing `/meetings?selector=...` links open its live transcript
+while capture is active, or its saved summary afterward. Meeting URLs are
 not searched. Open **Filters** for
 provider, account, agent, and date controls; the disclosure opens automatically
 when those filters are active. Provider, account, and agent IDs match
 exactly. Date filters use UTC session start times, with an inclusive lower bound
 and exclusive upper bound. **Next page** continues the ordered results;
 **First page**, a filter change, or **Refresh** starts a new pagination pass.
-The reader opens **Summary** first. Select **Transcript** for timestamped speaker
-text alongside the list on desktop or in a single column on mobile. Its URL
-preserves the selected meeting and tab.
+The reader opens **Transcript** for active meetings and **Summary** for completed
+meetings. An explicitly selected tab stays selected, including when capture ends.
+Timestamped speaker text appears alongside the list on desktop or in a single
+column on mobile. Its URL preserves the selected meeting and tab.
+
+While the page is visible and connected, the library and active meeting refresh
+automatically every three seconds. **Live capture** shows elapsed time; an empty
+active transcript says **Waiting for speech**. Updates show saved speech, so
+provider capture and transcription can add latency. Background reads preserve
+filter drafts, the current transcript page, and loaded history without a loading
+flash. Use **Load more** to continue past the current page. Hidden tabs pause
+automatic reads and catch up when visible again. Completed meetings refresh less
+frequently once notes are available; a meeting without notes keeps checking for
+the stored summary after capture stops.
 
 **Search within this transcript** searches the full stored transcript in bounded
 server pages. **Load more** continues through utterances or matches; only the

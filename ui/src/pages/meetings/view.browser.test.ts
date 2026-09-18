@@ -18,6 +18,7 @@ afterEach(() => {
 function readerProps(): Parameters<typeof renderTranscripts>[0] {
   return {
     basePath: "",
+    now: Date.parse(meetingEntry.updatedAt),
     search: "?selector=meeting",
     drafts: {},
     onDraft: vi.fn(),
