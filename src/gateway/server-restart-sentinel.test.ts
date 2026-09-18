@@ -880,6 +880,7 @@ describe("scheduleRestartSentinelWake", () => {
       source: "restart-sentinel",
       intent: "immediate",
       reason: "wake",
+      agentId: "main",
       sessionKey: "agent:main:main",
     });
     expect(mocks.recordInboundSessionAndDispatchReply).not.toHaveBeenCalled();
@@ -3349,18 +3350,15 @@ describe("scheduleRestartSentinelWake", () => {
         threadId: "thread-42",
       },
     });
-    expect(mocks.requestHeartbeat).toHaveBeenNthCalledWith(1, {
+    const wake = {
       source: "restart-sentinel",
       intent: "immediate",
       reason: "wake",
+      agentId: "main",
       sessionKey: "agent:main:main",
-    });
-    expect(mocks.requestHeartbeat).toHaveBeenNthCalledWith(2, {
-      source: "restart-sentinel",
-      intent: "immediate",
-      reason: "wake",
-      sessionKey: "agent:main:main",
-    });
+    };
+    expect(mocks.requestHeartbeat).toHaveBeenNthCalledWith(1, wake);
+    expect(mocks.requestHeartbeat).toHaveBeenNthCalledWith(2, wake);
   });
 
   it("logs and continues when continuation delivery fails", async () => {

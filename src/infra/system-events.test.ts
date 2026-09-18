@@ -13,6 +13,7 @@ import { resolveMainSessionKey } from "../config/sessions/main-session.js";
 import {
   enqueueRoutedSystemEvent,
   enqueueSystemEvent as enqueueSdkSystemEvent,
+  peekSystemEventEntries as peekSdkSystemEventEntries,
 } from "../plugin-sdk/system-event-runtime.js";
 import { isCronSystemEvent } from "./heartbeat-events-filter.js";
 import { withSystemEventOwner } from "./system-event-ownership.js";
@@ -110,6 +111,26 @@ describe("system events (session routing)", () => {
         const suffix = alias === "main" ? "work" : alias;
         expect(peekSystemEvents(`agent:alpha:${suffix}`)).toEqual(["Legacy caller"]);
         expect(peekSystemEvents(`agent:beta:${suffix}`)).toEqual([]);
+        enqueueRoutedSystemEvent("Owned caller", { agentId: "beta", sessionKey: alias });
+        expect(peekSdkSystemEventEntries(alias, "beta").map((event) => event.text)).toEqual([
+          "Owned caller",
+        ]);
+        expect(peekSdkSystemEventEntries(alias).map((event) => event.text)).toEqual([
+          "Legacy caller",
+        ]);
+        expect(enqueueSdkSystemEvent("Runtime owner", { sessionKey: alias, agentId: "beta" })).toBe(
+          true,
+        );
+        expect(peekSystemEvents(`agent:beta:${suffix}`)).toEqual(["Owned caller", "Runtime owner"]);
+        expect(() =>
+          enqueueSdkSystemEvent("Mismatched owner", {
+            sessionKey: `agent:alpha:${suffix}`,
+            agentId: "beta",
+          }),
+        ).toThrow("owner does not match");
+        expect(() => peekSdkSystemEventEntries(`agent:alpha:${suffix}`, "beta")).toThrow(
+          "owner does not match",
+        );
         setRuntimeConfigSnapshot({
           agents: { ownership: "explicit", entries: { alpha: {}, beta: {} } },
         });

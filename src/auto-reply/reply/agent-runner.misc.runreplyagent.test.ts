@@ -1094,7 +1094,7 @@ describe("runReplyAgent auto-compaction token update", () => {
       expect(events[0]).toContain("Never skip startup context after compaction.");
     });
 
-    const baseRun = createBaseRun({
+    await createBaseRun({
       run: {
         agentId: "main",
         agentDir: path.join(rootDir, "agent"),
@@ -1113,9 +1113,7 @@ describe("runReplyAgent auto-compaction token update", () => {
         sessionStore: { [sessionKey]: sessionEntry },
         sessionKey,
       },
-    });
-
-    await baseRun.run();
+    }).run();
 
     expect(scheduleFollowupDrain).toHaveBeenCalledTimes(1);
   });

@@ -45,7 +45,10 @@ import { enqueueSystemEvent as defaultEnqueueSystemEvent } from "../infra/system
 import type { PromptImageOrderEntry } from "../media/prompt-image-order.js";
 import { deleteMediaBuffer } from "../media/store.js";
 import { runWithGatewayIndependentRootWorkContinuation } from "../process/gateway-work-admission.js";
-import { normalizeMainKey as defaultNormalizeMainKey } from "../routing/session-key.js";
+import {
+  isUnscopedSessionKeySentinel,
+  normalizeMainKey as defaultNormalizeMainKey,
+} from "../routing/session-key.js";
 import { defaultRuntime } from "../runtime.js";
 import { resolveAgentHarnessSessionContextError } from "../sessions/agent-harness-session-key.js";
 import { NODE_HOST_STATS_EVENT } from "../shared/node-host-stats.js";
@@ -512,21 +515,6 @@ async function cleanupNodeEventMedia(
       );
     }
   }
-}
-
-function parseSessionKeyFromPayloadJSON(payloadJSON: string): string | null {
-  let payload: unknown;
-  try {
-    payload = JSON.parse(payloadJSON) as unknown;
-  } catch {
-    return null;
-  }
-  if (typeof payload !== "object" || payload === null) {
-    return null;
-  }
-  const obj = payload as Record<string, unknown>;
-  const sessionKey = normalizeOptionalString(obj.sessionKey) ?? "";
-  return sessionKey.length > 0 ? sessionKey : null;
 }
 
 function parsePayloadObject(payloadJSON?: string | null): Record<string, unknown> | null {
@@ -1000,8 +988,13 @@ export const handleNodeEvent = async (
         );
         return undefined;
       }
-      const sessionKeyRaw = target.sessionKey;
-      const { canonicalKey: sessionKey, entry } = loadSessionEntry(sessionKeyRaw);
+      const {
+        canonicalKey: sessionKey,
+        entry,
+        agentId,
+      } = loadSessionEntry(target.sessionKey, {
+        agentId: target.agentId,
+      });
       if (resolveAgentHarnessSessionContextError(sessionKey, entry)) {
         return undefined;
       }
@@ -1028,30 +1021,23 @@ export const handleNodeEvent = async (
         }
       }
 
-      const eventOptions = {
-        sessionKey,
-        contextKey: `notification:${keyRaw}`,
-      };
       const queued = enqueueSystemEvent(
         summary,
-        target.agentId ? withSystemEventOwner(eventOptions, target.agentId) : eventOptions,
+        withSystemEventOwner({ sessionKey, contextKey: `notification:${keyRaw}` }, agentId),
       );
       if (queued) {
         requestHeartbeat({
           source: "notifications-event",
           intent: "event",
           reason: "notifications-event",
-          ...(target.agentId ? { agentId: target.agentId } : {}),
+          agentId,
           sessionKey,
         });
       }
       return undefined;
     }
     case "chat.subscribe": {
-      if (!evt.payloadJSON) {
-        return undefined;
-      }
-      const sessionKey = parseSessionKeyFromPayloadJSON(evt.payloadJSON);
+      const sessionKey = normalizeOptionalString(parsePayloadObject(evt.payloadJSON)?.sessionKey);
       if (!sessionKey) {
         return undefined;
       }
@@ -1061,10 +1047,7 @@ export const handleNodeEvent = async (
       return undefined;
     }
     case "chat.unsubscribe": {
-      if (!evt.payloadJSON) {
-        return undefined;
-      }
-      const sessionKey = parseSessionKeyFromPayloadJSON(evt.payloadJSON);
+      const sessionKey = normalizeOptionalString(parsePayloadObject(evt.payloadJSON)?.sessionKey);
       if (!sessionKey) {
         return undefined;
       }
@@ -1080,7 +1063,7 @@ export const handleNodeEvent = async (
         return undefined;
       }
       const sessionKeyRaw = normalizeOptionalString(obj.sessionKey) ?? `node-${nodeId}`;
-      const { canonicalKey: sessionKey } = loadSessionEntry(sessionKeyRaw);
+      const { canonicalKey: sessionKey, agentId } = loadSessionEntry(sessionKeyRaw);
 
       const cfg = getRuntimeConfig();
       const runId = normalizeOptionalString(obj.runId) ?? "";
@@ -1158,13 +1141,11 @@ export const handleNodeEvent = async (
             sessionKey: resolveEventSessionKeyForPolicy(sessionKey, eventRouting),
             contextKey: runId ? `exec:${runId}` : "exec",
           },
-          resolveSessionAgentId({ sessionKey, config: cfg }),
+          agentId,
         ),
       );
       if (queued) {
-        // Scope wakes only for canonical agent sessions. Synthetic node-* fallback
-        // keys should keep legacy unscoped behavior so enabled non-main heartbeat
-        // agents still run when no explicit agent session is provided.
+        // Global keys retain the loaded owner; synthetic node-* keys keep unscoped wakes.
         requestHeartbeat(
           scopedHeartbeatWakeOptionsForPolicy(
             sessionKey,
@@ -1173,6 +1154,7 @@ export const handleNodeEvent = async (
               intent: "event",
               reason: "exec-event",
               coalesceMs: 0,
+              ...(isUnscopedSessionKeySentinel(sessionKey) ? { agentId } : {}),
             },
             eventRouting,
           ),

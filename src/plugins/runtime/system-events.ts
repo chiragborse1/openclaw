@@ -18,10 +18,13 @@ function resolveSystemEventSessionKey(sessionKey: string, agentId?: string): str
   );
 }
 
-export const enqueueSystemEventFromSdk: typeof events.enqueueSystemEvent = (text, options) =>
+export const enqueueSystemEventFromSdk = (
+  text: string,
+  { agentId, ...options }: Parameters<typeof events.enqueueSystemEvent>[1] & { agentId?: string },
+) =>
   events.enqueueSystemEvent(text, {
     ...options,
-    sessionKey: resolveSystemEventSessionKey(options.sessionKey),
+    sessionKey: resolveSystemEventSessionKey(options.sessionKey, agentId),
   });
 
 export const enqueueSystemEventEntryFromSdk: typeof events.enqueueSystemEventEntry = (
@@ -41,9 +44,10 @@ export function enqueueRoutedSystemEvent(
   if (!route.agentId.trim()) {
     throw new Error("routed system events require route.agentId");
   }
-  return events.enqueueSystemEvent(text, {
+  return enqueueSystemEventFromSdk(text, {
     ...options,
-    sessionKey: resolveSystemEventSessionKey(route.sessionKey, route.agentId),
+    sessionKey: route.sessionKey,
+    agentId: route.agentId,
   });
 }
 
@@ -60,8 +64,9 @@ export const isSystemEventContextChangedFromSdk: typeof events.isSystemEventCont
   key,
   context,
 ) => events.isSystemEventContextChanged(resolveSystemEventSessionKey(key), context);
-export const peekSystemEventEntriesFromSdk: typeof events.peekSystemEventEntries = (key) =>
-  events.peekSystemEventEntries(resolveSystemEventSessionKey(key));
+export function peekSystemEventEntriesFromSdk(key: string, agentId?: string) {
+  return events.peekSystemEventEntries(resolveSystemEventSessionKey(key, agentId));
+}
 export const peekSystemEventsFromSdk: typeof events.peekSystemEvents = (key) =>
   events.peekSystemEvents(resolveSystemEventSessionKey(key));
 export {
