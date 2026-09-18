@@ -60,7 +60,7 @@ export function createUpdateStateInspectionDiagnostics(params: {
     tail = `${tail}${line}\n`.slice(-DIAGNOSTIC_TAIL_CHARS);
   };
   return {
-    onOutputChunk(chunk: Buffer, stream: "stdout" | "stderr") {
+    onOutputChunk: (chunk: Buffer, stream: "stdout" | "stderr") => {
       if (stream !== "stderr") {
         return;
       }
@@ -73,10 +73,8 @@ export function createUpdateStateInspectionDiagnostics(params: {
     stderr: () => `${tail}${pending}`.trim(),
     failure(reason: unknown, termination?: string) {
       const detail =
-        (reason instanceof Error
-          ? formatErrorMessageWithCode(reason)
-          : String(reason ?? "")
-        ).trim() || "Worker exited without diagnostic output";
+        formatErrorMessageWithCode(reason ?? "").trim() ||
+        "Worker exited without diagnostic output";
       const elapsed = Math.max(0, Date.now() - startedAt) / 1000;
       const scope = params.paths.slice(0, 3).join(", ");
       const source =
