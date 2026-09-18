@@ -85,7 +85,7 @@ export function readWorkspaceSkillsRequest(input: unknown) {
   return {
     workspaceDir,
     request: params.request,
-    operation: params.operation as string,
+    operation: params.operation,
     watch: params.operation === "watch",
     paths,
   };

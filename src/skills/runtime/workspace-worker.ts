@@ -35,6 +35,7 @@ export async function serveWorkspaceSkills(options: {
     const { applyExtractedSkillRoot } = await import("../lifecycle/archive-install.js");
     const lines = skillWorkerLines(input);
     try {
+      // SAFETY: The provisioned publisher sends ApplyRequest; the upload root is checked below.
       const request = (await lines.read()) as ApplyRequest;
       if (
         typeof request.extractedRoot !== "string" ||
@@ -48,6 +49,7 @@ export async function serveWorkspaceSkills(options: {
         logger: { info: console.error, warn: console.error },
         beforeInstall: async (mode) => {
           await write({ type: "prepared", mode });
+          // SAFETY: The Gateway policy reply is checked for null or a valid error decision below.
           const reply = (await lines.read()) as Decision;
           if (reply.decision === null) {
             return undefined;
@@ -73,6 +75,7 @@ export async function serveWorkspaceSkills(options: {
     const { resolveWorkspaceSkillInstallDir } = await import("../lifecycle/archive-install.js");
     const lines = skillWorkerLines(input);
     try {
+      // SAFETY: The publisher sends its native uninstall plan; the target is checked below.
       const request = (await lines.read()) as RemovalRequest;
       if (
         request.plan?.targetDir !== resolveWorkspaceSkillInstallDir(workspace, request.plan?.slug)
@@ -81,6 +84,7 @@ export async function serveWorkspaceSkills(options: {
       }
       const checkpoint = async (phase: string, event?: unknown) => {
         await write({ type: "prepared", phase, event });
+        // SAFETY: The Gateway checkpoint reply is checked for null or an error string below.
         const reply = (await lines.read()) as Decision;
         if (reply.decision === null) {
           return;
@@ -123,6 +127,7 @@ export async function serveWorkspaceSkills(options: {
     let unavailable = false;
     let unsubscribe: (() => void) | undefined;
     try {
+      // SAFETY: The same-version watch adapter sends this contract; workspace identity is checked next.
       const request = (await lines.read()) as WatchRequest;
       assertWorkspace(request, workspace);
       const params = { ...request, workspaceDir: workspace };
@@ -166,7 +171,8 @@ export async function serveWorkspaceSkills(options: {
   }
 
   const chunks: Buffer[] = [];
-  for await (const raw of input as AsyncIterable<unknown>) {
+  const inputChunks: AsyncIterable<unknown> = input;
+  for await (const raw of inputChunks) {
     if (typeof raw === "string") {
       chunks.push(Buffer.from(raw));
     } else if (raw instanceof Uint8Array) {
@@ -180,6 +186,7 @@ export async function serveWorkspaceSkills(options: {
   if (operation === "installDependencies") {
     const { installSkillDependencies } = await import("../lifecycle/install.js");
     await write(
+      // SAFETY: The Gateway adapter serializes the approved native dependency recipe for this operation.
       await installSkillDependencies(decoded as Parameters<typeof installSkillDependencies>[0]),
     );
     return;
@@ -194,12 +201,14 @@ export async function serveWorkspaceSkills(options: {
       switch (operation) {
         case "clawhubPlanRemoval":
           result = await uninstall.planClawHubSkillUninstall({
+            // SAFETY: The paired adapter sends native plan arguments; the host supplies workspaceDir.
             ...(decoded as HostRequest<Parameters<typeof Uninstall.planClawHubSkillUninstall>[0]>),
             workspaceDir: workspace,
           });
           break;
         case "clawhubVerifyTarget":
           result = await status.resolveClawHubSkillVerificationTarget({
+            // SAFETY: The paired adapter sends native verification arguments; workspaceDir is host-owned.
             ...(decoded as HostRequest<
               Parameters<typeof Status.resolveClawHubSkillVerificationTarget>[0]
             >),
@@ -208,6 +217,7 @@ export async function serveWorkspaceSkills(options: {
           break;
         case "clawhubPreflight":
           result = await status.preflightSkillOwnerState({
+            // SAFETY: The paired adapter sends native preflight arguments; workspaceDir is host-owned.
             ...(decoded as HostRequest<Parameters<typeof Status.preflightSkillOwnerState>[0]>),
             workspaceDir: workspace,
           });
@@ -217,18 +227,21 @@ export async function serveWorkspaceSkills(options: {
           break;
         case "clawhubUpdateSlug":
           result = await status.resolveRequestedUpdateSlug({
+            // SAFETY: The paired adapter serializes the native update selector and lock snapshot.
             ...(decoded as HostRequest<Parameters<typeof Status.resolveRequestedUpdateSlug>[0]>),
             workspaceDir: workspace,
           });
           break;
         case "clawhubUpdateTarget":
           result = await status.resolveTrackedUpdateTarget({
+            // SAFETY: The paired adapter serializes native target lookup arguments; roots stay host-owned.
             ...(decoded as HostRequest<Parameters<typeof Status.resolveTrackedUpdateTarget>[0]>),
             workspaceDir: workspace,
           });
           break;
         case "clawhubUpdateGuard":
           result = await uninstall.guardTrackedSkillLocalState({
+            // SAFETY: The paired adapter sends the native guard arguments; the native owner checks state.
             ...(decoded as HostRequest<
               Parameters<typeof Uninstall.guardTrackedSkillLocalState>[0]
             >),
@@ -237,17 +250,20 @@ export async function serveWorkspaceSkills(options: {
           break;
         case "clawhubCheckInstall":
           await store.assertClawHubSkillInstallState({
+            // SAFETY: The paired adapter sends native install-check arguments; workspaceDir is host-owned.
             ...(decoded as HostRequest<Parameters<typeof Store.assertClawHubSkillInstallState>[0]>),
             workspaceDir: workspace,
           });
           break;
         case "clawhubReadFiles": {
+          // SAFETY: The adapter sends the installed path; its workspace boundary is checked next.
           const request = decoded as Parameters<typeof Store.readInstalledClawHubSkillFiles>[0];
           assertSkillDir(request.skillDir, workspace);
           result = await store.readInstalledClawHubSkillFiles(request);
           break;
         }
         case "clawhubRecordInstall": {
+          // SAFETY: The adapter sends native provenance; path and slug consistency are checked below.
           const request = decoded as HostRequest<
             Parameters<typeof Store.recordClawHubSkillInstall>[0]
           >;
@@ -281,6 +297,7 @@ export async function serveWorkspaceSkills(options: {
       return;
     }
     case "recordSource": {
+      // SAFETY: The publisher sends native source provenance; the host derives its installation path.
       const request = decoded as Pick<Parameters<typeof recordSkillSourceInstall>[0], "origin">;
       const { recordSkillSourceInstall } = await import("../lifecycle/source-install-metadata.js");
       const { resolveWorkspaceSkillInstallDir } = await import("../lifecycle/archive-install.js");
@@ -296,12 +313,14 @@ export async function serveWorkspaceSkills(options: {
       const { resolveExplicitSkillResource } = await import("./resources.js");
       await write(
         await resolveExplicitSkillResource(
+          // SAFETY: The same-version adapter serializes the selected resource's native contract.
           decoded as Parameters<typeof resolveExplicitSkillResource>[0],
         ),
       );
       return;
     }
     case "readResources": {
+      // SAFETY: The same-version adapter sends the selected Skill and native missing-root policy.
       const request = decoded as {
         skill: Parameters<typeof readSkillResourceFiles>[0];
         allowMissingRoot: boolean;
@@ -313,6 +332,7 @@ export async function serveWorkspaceSkills(options: {
       return;
     }
     case "discovery": {
+      // SAFETY: The adapter serializes the native source plan; workspace identity is checked next.
       const discovery = decoded as WorkspaceSkillSourceRequest;
       assertWorkspace(discovery, workspace);
       const { readWorkspaceSkillSources } = await import("../loading/workspace-skill-loader.js");

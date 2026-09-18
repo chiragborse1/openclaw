@@ -44,8 +44,9 @@ type NativeMemoryWatchResult = "attached" | "missing" | "failed";
 
 function resolveMemoryWatchFactory(): typeof chokidar.watch {
   if (process.env.VITEST === "true" || process.env.NODE_ENV === "test") {
-    const override = (globalThis as Record<PropertyKey, unknown>)[TEST_MEMORY_WATCH_FACTORY_KEY];
+    const override: unknown = Reflect.get(globalThis, TEST_MEMORY_WATCH_FACTORY_KEY);
     if (typeof override === "function") {
+      // SAFETY: Only test fixtures install the chokidar-compatible factory at this test-only symbol.
       return override as typeof chokidar.watch;
     }
   }
@@ -54,10 +55,9 @@ function resolveMemoryWatchFactory(): typeof chokidar.watch {
 
 function resolveMemoryNativeWatchFactory(): typeof fsSync.watch {
   if (process.env.VITEST === "true" || process.env.NODE_ENV === "test") {
-    const override = (globalThis as Record<PropertyKey, unknown>)[
-      TEST_MEMORY_NATIVE_WATCH_FACTORY_KEY
-    ];
+    const override: unknown = Reflect.get(globalThis, TEST_MEMORY_NATIVE_WATCH_FACTORY_KEY);
     if (typeof override === "function") {
+      // SAFETY: Only test fixtures install the fs.watch-compatible factory at this test-only symbol.
       return override as typeof fsSync.watch;
     }
   }

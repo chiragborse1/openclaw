@@ -113,6 +113,7 @@ describe("workspace Memory file client", () => {
     const f = fixture();
     const settings = {
       extraPaths: ["/gateway/notes"],
+      multimodal: { enabled: false, modalities: [], maxFileBytes: 1024 },
       sync: { watchDebounceMs: 10 },
       provider: { apiKey: "synthetic-not-a-credential" },
     };
@@ -123,7 +124,11 @@ describe("workspace Memory file client", () => {
     await f.files.watch({ agentId: "main", settings }, onChange, new AbortController().signal);
     expect(JSON.parse(f.subscribe.mock.calls[0]![0])).toEqual({
       agentId: "main",
-      settings: { extraPaths: ["/harness/notes"], sync: { watchDebounceMs: 10 } },
+      settings: {
+        extraPaths: ["/harness/notes"],
+        multimodal: settings.multimodal,
+        sync: { watchDebounceMs: 10 },
+      },
     });
     expect(onChange.mock.calls).toEqual([["change"], ["unavailable"]]);
   });

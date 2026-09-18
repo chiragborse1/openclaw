@@ -1,3 +1,4 @@
+import type { SkillLibraryFile } from "../../packages/gateway-protocol/src/schema/skill-library.js";
 // Skill types expose the shared skill contracts used by discovery, loading, and runtime flows.
 import type { Skill } from "./loading/skill-contract.js";
 
@@ -154,4 +155,16 @@ export type SkillSnapshot = {
   };
   version?: number;
   promptFormatVersion?: number;
+};
+
+/** Filesystem reads run on the workspace host; catalog selection stays with the caller. */
+export type SkillResourceSourceReader = {
+  /** Read the instruction path selected by the run, without packaging supporting files. */
+  readInstructions: (filePath: string, options: { signal?: AbortSignal }) => Promise<string>;
+  resolveExplicitSkill: (selection: ExplicitSkillSelection) => Promise<Skill | null>;
+  /** Null means only the requested root vanished, and only when allowMissingRoot is true. */
+  readSkillFiles: (
+    skill: Skill,
+    options: { allowMissingRoot: boolean },
+  ) => Promise<SkillLibraryFile[] | null>;
 };

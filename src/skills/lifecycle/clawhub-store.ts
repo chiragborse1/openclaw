@@ -6,11 +6,9 @@ import {
   getAgentWorkspaceAccess,
   WorkspaceAccessUnavailableError,
 } from "../../agents/workspace-access.js";
-import type { ClawHubDownloadResult } from "../../infra/clawhub-artifacts.js";
 import {
   CLAWHUB_SKILLS_SH_REF_PREFIX,
   CLAWHUB_SKILLS_SH_TRUST_STATE,
-  type ClawHubSkillVerificationResponse,
   type ClawHubSkillsShTrustState,
 } from "../../infra/clawhub-skills.js";
 import { sha256Hex } from "../../infra/crypto-digest.js";
@@ -31,6 +29,22 @@ import {
   validateRequestedSkillSlug,
 } from "./archive-install.js";
 import { digestClawHubSkillTree } from "./skill-tree-digest.js";
+import type {
+  WorkspaceSkillLifecycle,
+  ClawHubSkillDownloadedArtifactLock,
+  ClawHubSkillFileLock,
+  ClawHubSkillOrigin,
+  ClawHubSkillsLockfile,
+  ClawHubSkillRef,
+} from "./workspace-types.js";
+
+export type {
+  ClawHubSkillDownloadedArtifactLock,
+  ClawHubSkillFileLock,
+  ClawHubSkillVerificationLock,
+  ClawHubSkillsLockfile,
+  ClawHubSkillRef,
+} from "./workspace-types.js";
 
 export { normalizeOptionalStringValue };
 
@@ -40,74 +54,10 @@ const CLAWHUB_OWNER_HANDLE_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,38}[a-z0-9])?$/;
 const GITHUB_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const GITHUB_REPO_PATTERN = /^[A-Za-z0-9._-]{1,100}$/;
 
-export type ClawHubSkillDownloadedArtifactLock = {
-  kind: ClawHubDownloadResult["artifact"];
-  sha256: string;
-  integrity: string;
-};
-
-export type ClawHubSkillFileLock = {
-  path: string;
-  sha256: string;
-};
-
-export type ClawHubSkillVerificationLock = {
-  schema: ClawHubSkillVerificationResponse["schema"];
-  ok: boolean;
-  decision: ClawHubSkillVerificationResponse["decision"];
-  reasons: string[];
-  card?: unknown;
-  artifact?: unknown;
-  provenance?: unknown;
-  security?: unknown;
-  signature?: unknown;
-};
-
-type ClawHubSkillLockEntry = {
-  version: string;
-  installedAt: number;
-  registry?: string;
-  ownerHandle?: string;
-  requestedReference?: string;
-  trustState?: ClawHubSkillsShTrustState;
-  sourceUrl?: string;
-  artifact?: ClawHubSkillDownloadedArtifactLock;
-  skillFile?: ClawHubSkillFileLock;
-  fileTreeSha256?: string;
-  verification?: ClawHubSkillVerificationLock;
-};
-
-type ClawHubSkillOrigin = {
-  version: 1;
-  registry: string;
-  slug: string;
-  ownerHandle?: string;
-  requestedReference?: string;
-  trustState?: ClawHubSkillsShTrustState;
-  installedVersion: string;
-  installedAt: number;
-  sourceUrl?: string;
-  artifact?: ClawHubSkillDownloadedArtifactLock;
-  skillFile?: ClawHubSkillFileLock;
-  fileTreeSha256?: string;
-};
-
-export type ClawHubSkillsLockfile = {
-  version: 1;
-  skills: Record<string, ClawHubSkillLockEntry>;
-};
-
 export type ClawHubSkillsLockfileStatusRead =
   | { kind: "found"; lock: ClawHubSkillsLockfile; path: string }
   | { kind: "missing" }
   | { kind: "malformed"; path: string; error: string };
-
-export type ClawHubSkillRef = {
-  slug: string;
-  ownerHandle?: string;
-  requestedReference?: string;
-  trustState?: ClawHubSkillsShTrustState;
-};
 
 type StrictOriginReadResult =
   | { kind: "found"; origin: ClawHubSkillOrigin; path: string }
@@ -296,7 +246,7 @@ function parseClawHubSkillsLockfile(
 }
 
 export async function readClawHubSkillsLockfile(
-  workspaceDir: string,
+  workspaceDir: Parameters<WorkspaceSkillLifecycle["readClawHubSkillsLockfile"]>[0],
 ): Promise<ClawHubSkillsLockfile> {
   for (const candidate of metadataPaths(workspaceDir, "lock.json")) {
     try {
@@ -319,7 +269,7 @@ export async function readClawHubSkillsLockfile(
   return { version: 1, skills: {} };
 }
 
-export async function writeClawHubSkillsLockfile(
+async function writeClawHubSkillsLockfile(
   workspaceDir: string,
   lockfile: ClawHubSkillsLockfile,
 ): Promise<void> {
@@ -422,14 +372,14 @@ export async function readClawHubSkillOriginStrict(
   return { kind: "missing" };
 }
 
-export async function writeClawHubSkillOrigin(
+async function writeClawHubSkillOrigin(
   skillDir: string,
   origin: ClawHubSkillOrigin,
 ): Promise<void> {
   await writeJson(path.join(skillDir, DOT_DIR, "origin.json"), origin, { trailingNewline: true });
 }
 
-export async function readInstalledSkillFileLock(
+async function readInstalledSkillFileLock(
   skillDir: string,
 ): Promise<ClawHubSkillFileLock | undefined> {
   for (const marker of CLAWHUB_SKILL_ARCHIVE_ROOT_MARKERS) {
@@ -443,12 +393,9 @@ export async function readInstalledSkillFileLock(
 }
 
 /** Finalize native tracking beside the installed files, preserving other tracked skills. */
-export async function recordClawHubSkillInstall(params: {
-  workspaceDir: string;
-  skillDir: string;
-  origin: ClawHubSkillOrigin;
-  verification?: ClawHubSkillVerificationLock;
-}): Promise<void> {
+export async function recordClawHubSkillInstall(
+  params: Parameters<WorkspaceSkillLifecycle["recordClawHubSkillInstall"]>[0],
+): Promise<void> {
   const { origin, verification } = params;
   await writeClawHubSkillOrigin(params.skillDir, origin);
   const lock = await readClawHubSkillsLockfile(params.workspaceDir);
@@ -527,11 +474,9 @@ export async function untrackClawHubSkill(
 }
 
 /** Check the native target and tracking before acquiring an archive. */
-export async function assertClawHubSkillInstallState(params: {
-  workspaceDir: string;
-  slug: string;
-  force?: boolean;
-}): Promise<void> {
+export async function assertClawHubSkillInstallState(
+  params: Parameters<WorkspaceSkillLifecycle["assertClawHubSkillInstallState"]>[0],
+): Promise<void> {
   const targetDir = resolveWorkspaceSkillInstallDir(params.workspaceDir, params.slug);
   if (!params.force && (await pathExists(targetDir))) {
     throw new Error(`Skill already exists at ${targetDir}. Re-run with force/update.`);
@@ -540,9 +485,9 @@ export async function assertClawHubSkillInstallState(params: {
   await readClawHubSkillsLockfile(params.workspaceDir);
 }
 
-export async function readInstalledClawHubSkillFiles(params: {
-  skillDir: string;
-}): Promise<{ fileTreeSha256: string; skillFile?: ClawHubSkillFileLock }> {
+export async function readInstalledClawHubSkillFiles(
+  params: Parameters<WorkspaceSkillLifecycle["readInstalledClawHubSkillFiles"]>[0],
+): Promise<{ fileTreeSha256: string; skillFile?: ClawHubSkillFileLock }> {
   const fileTreeSha256 = await digestClawHubSkillTree(params.skillDir);
   const skillFile = await readInstalledSkillFileLock(params.skillDir);
   return { fileTreeSha256, ...(skillFile ? { skillFile } : {}) };

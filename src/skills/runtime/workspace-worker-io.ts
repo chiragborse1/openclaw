@@ -11,6 +11,7 @@ export function decodeSkillWorkerRequest(text: string): Record<string, unknown> 
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Skill worker request must be an object");
   }
+  // SAFETY: JSON.parse returned a non-null, non-array object; every property stays unknown.
   return value as Record<string, unknown>;
 }
 

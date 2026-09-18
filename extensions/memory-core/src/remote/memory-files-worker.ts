@@ -56,6 +56,7 @@ export async function serveMemoryFiles(options: {
         if (watcher) {
           throw new Error("Unexpected message on the Memory watch subscription");
         }
+        // SAFETY: The provisioned adapter sends this same-version file-watch contract on stdin.
         const request = JSON.parse(line) as MemoryWorkspaceWatchRequest;
         const notify = (event: "change" | "unavailable") => {
           options.output.write(`${JSON.stringify(event)}\n`);
@@ -76,7 +77,8 @@ export async function serveMemoryFiles(options: {
     return;
   }
   const chunks: Buffer[] = [];
-  for await (const chunk of options.input as AsyncIterable<unknown>) {
+  const inputChunks: AsyncIterable<unknown> = options.input;
+  for await (const chunk of inputChunks) {
     if (typeof chunk !== "string" && !(chunk instanceof Uint8Array)) {
       throw new Error("Memory file request must be bytes");
     }
@@ -86,7 +88,7 @@ export async function serveMemoryFiles(options: {
   if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
     throw new Error("Memory file request must be an object");
   }
-  // Like the native Skills subprocess, this is private IPC, not a public RPC schema.
+  // SAFETY: The provisioned adapter serializes FileCommand after admitting the operation and roots.
   const request = decoded as FileCommand;
   const workspace = path.resolve(options.workspace);
   let result: unknown;

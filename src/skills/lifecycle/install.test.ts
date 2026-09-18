@@ -9,7 +9,7 @@ import {
   initializeGlobalHookRunner,
   resetGlobalHookRunner,
 } from "../../plugins/hook-runner-global.js";
-import { createMockPluginRegistry } from "../../plugins/hooks.test-fixtures.js";
+import { addTestHook, createMockPluginRegistry } from "../../plugins/hooks.test-fixtures.js";
 import { captureEnv } from "../../test-utils/env.js";
 import { createFixtureSuite } from "../../test-utils/fixture-suite.js";
 import { withMockedPlatform } from "../../test-utils/vitest-spies.js";
@@ -245,9 +245,14 @@ describe("installSkill before_install hooks", () => {
             ? { block: true, blockReason: "Organization denied" }
             : undefined;
         });
-        initializeGlobalHookRunner(
-          createMockPluginRegistry([{ hookName: "before_install", handler: policy }]),
-        );
+        const registry = createMockPluginRegistry([]);
+        addTestHook({
+          registry,
+          pluginId: "test-plugin",
+          hookName: "before_install",
+          handler: policy,
+        });
+        initializeGlobalHookRunner(registry);
         const hostInstall = vi.fn(async () => {
           throw new Error("Harness connection lost");
         });
@@ -316,9 +321,14 @@ describe("installSkill before_install hooks", () => {
           "export {};\n",
         );
       });
-      initializeGlobalHookRunner(
-        createMockPluginRegistry([{ hookName: "before_install", handler: policy }]),
-      );
+      const registry = createMockPluginRegistry([]);
+      addTestHook({
+        registry,
+        pluginId: "test-plugin",
+        hookName: "before_install",
+        handler: policy,
+      });
+      initializeGlobalHookRunner(registry);
       const release = registerAgentWorkspaceAccess(workspaceDir, {
         bridge: { readFile: vi.fn(), writeFile: vi.fn(), stat: vi.fn() },
         installSkillDependencies: hostInstall,

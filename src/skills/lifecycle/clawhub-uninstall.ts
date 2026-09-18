@@ -21,33 +21,17 @@ import {
   snapshotCommittedSkillArtifactBestEffort,
 } from "./skill-change-hook.js";
 import { checkClawHubSkillPlanAtPath, digestClawHubSkillTree } from "./skill-tree-digest.js";
+import type {
+  WorkspaceSkillLifecycle,
+  ClawHubSkillUninstallPlan,
+  ClawHubSkillUninstallPlanResult,
+} from "./workspace-types.js";
 
-export type ClawHubSkillUninstallPlan = {
-  workspaceDir: string;
-  // Replan from the registry identity so publisher/source changes cannot retarget deletion.
-  requestedRef: string;
-  slug: string;
-  version: string;
-  installedAt: number;
-  targetDir: string;
-  skillFilePath: string;
-  skillFileSha256: string;
-  fileTreeSha256: string;
-};
+export type { ClawHubSkillUninstallPlan } from "./workspace-types.js";
 
-type ClawHubSkillUninstallPlanResult =
-  | { ok: true; plan: ClawHubSkillUninstallPlan }
-  | {
-      ok: false;
-      code: "missing" | "ambiguous" | "modified";
-      error: string;
-    };
-
-export async function planClawHubSkillUninstall(params: {
-  workspaceDir: string;
-  slug: string;
-  expectedVersion: string;
-}): Promise<ClawHubSkillUninstallPlanResult> {
+export async function planClawHubSkillUninstall(
+  params: Parameters<WorkspaceSkillLifecycle["planClawHubSkillUninstall"]>[0],
+): Promise<ClawHubSkillUninstallPlanResult> {
   const access = getAgentWorkspaceAccess(params.workspaceDir);
   if (access) {
     if (!access.clawHubSkills) {
@@ -68,7 +52,7 @@ export async function planClawHubSkillUninstall(params: {
   });
 }
 
-export async function planTrackedClawHubSkillState(params: {
+async function planTrackedClawHubSkillState(params: {
   workspaceDir: string;
   requestedRef: ReturnType<typeof parseRequestedClawHubSkillRef>;
   expectedVersion: string;
@@ -180,15 +164,10 @@ export async function applyClawHubSkillUninstall(
     removeDir?: typeof fs.rm;
     rename?: typeof fs.rename;
     untrack?: typeof untrackClawHubSkill;
-    beforePersistentApply?: () => void;
     /** Await remote authority, then retain the synchronous local mutation checks. */
     authorizeMutation?: Parameters<typeof untrackClawHubSkill>[4];
-    /** Compensation keeps the exact package lease, independently of canceled parent execution. */
-    beforeRollback?: () => void;
-    /** Forward host-owned change facts when plugin hooks run on another host. */
-    onCommittedChange?: typeof dispatchCommittedSkillChangeBestEffort;
-  } = {},
-): Promise<{ ok: true } | { ok: false; error: string }> {
+  } & Parameters<WorkspaceSkillLifecycle["applyClawHubSkillUninstall"]>[1] = {},
+): ReturnType<WorkspaceSkillLifecycle["applyClawHubSkillUninstall"]> {
   const access = getAgentWorkspaceAccess(plan.workspaceDir);
   if (access) {
     if (!access.clawHubSkills) {
@@ -327,11 +306,9 @@ export async function applyClawHubSkillUninstall(
   }
 }
 
-export async function guardTrackedSkillLocalState(params: {
-  workspaceDir: string;
-  slug: string;
-  previousVersion: string | null;
-}): Promise<
+export async function guardTrackedSkillLocalState(
+  params: Parameters<WorkspaceSkillLifecycle["guardTrackedSkillLocalState"]>[0],
+): Promise<
   { ok: true; plan: ClawHubSkillUninstallPlan | undefined } | { ok: false; error: string }
 > {
   const targetDir = resolveWorkspaceSkillInstallDir(params.workspaceDir, params.slug);

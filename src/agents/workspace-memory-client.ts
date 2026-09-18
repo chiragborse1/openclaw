@@ -49,7 +49,7 @@ export function createWorkspaceMemoryFileClient(options: {
     try {
       const reply = await options.request(JSON.stringify(request), options.signal);
       options.signal.throwIfAborted();
-      // This is the packaged worker's private IPC, not an unauthenticated network endpoint.
+      // SAFETY: The same-version Memory worker serializes this operation's result or error envelope.
       response = JSON.parse(reply) as typeof response;
     } catch (error) {
       if (request.operation === "maintenance" && request.method === "commitContent") {

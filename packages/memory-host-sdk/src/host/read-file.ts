@@ -24,7 +24,7 @@ import {
 import {
   getAgentWorkspaceAccess,
   WorkspaceAccessUnavailableError,
-} from "./openclaw-runtime-workspace.js";
+} from "./openclaw-runtime-agent.js";
 import {
   buildMemoryReadResult,
   DEFAULT_MEMORY_READ_LINES,

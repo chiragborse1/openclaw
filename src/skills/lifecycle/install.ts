@@ -28,6 +28,7 @@ import { installDownloadSpec } from "./install-download.js";
 import { formatInstallFailureMessage } from "./install-output.js";
 import { withSkillInstallPolicySource } from "./install-policy-source.js";
 import type { SkillInstallResult, SkillInstallSkipReason } from "./install-types.js";
+import type { WorkspaceSkillLifecycle } from "./workspace-types.js";
 
 type SkillInstallRequest = {
   workspaceDir: string;
@@ -792,12 +793,9 @@ export async function installSkill(params: SkillInstallRequest): Promise<SkillIn
 }
 
 /** Runs only the approved recipe on the host that owns the Harness tools directory. */
-export async function installSkillDependencies(params: {
-  skillKey: string;
-  spec: SkillInstallSpec;
-  preferences: SkillsInstallPreferences;
-  timeoutMs: number;
-}): Promise<SkillInstallResult> {
+export async function installSkillDependencies(
+  params: Parameters<WorkspaceSkillLifecycle["installSkillDependencies"]>[0],
+): Promise<SkillInstallResult> {
   const { skillKey, spec, preferences: prefs } = params;
   const timeoutMs = Math.min(Math.max(params.timeoutMs, 1_000), 900_000);
   if (spec.kind === "download") {

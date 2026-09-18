@@ -191,7 +191,7 @@ function mergeSkillRecords<T extends { skill: Skill }>(records: T[], workspaceDi
 }
 
 /** Scan selected roots on their owning host, retaining native precedence and file rules. */
-export function loadWorkspaceSkillSourceEntries(
+function loadWorkspaceSkillSourceEntries(
   plan: WorkspaceSkillSourcePlan,
   config?: OpenClawConfig,
 ): SkillEntry[] {

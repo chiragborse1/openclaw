@@ -4,44 +4,28 @@ import {
   extractErrorCode,
 } from "@openclaw/normalization-core/error-coercion";
 import type { MemoryWorkspaceFiles } from "../../packages/memory-host-sdk/src/host/workspace-files.js";
-import { readPersistedMediaFacts } from "../media/media-facts.js";
-import type { applyExtractedSkillRoot } from "../skills/lifecycle/archive-install.js";
-import type {
-  preflightSkillOwnerState,
-  resolveClawHubSkillVerificationTarget,
-  resolveRequestedUpdateSlug,
-  resolveTrackedUpdateTarget,
-} from "../skills/lifecycle/clawhub-status.js";
-import type {
-  assertClawHubSkillInstallState,
-  readInstalledClawHubSkillFiles,
-  readClawHubSkillsLockfile,
-  recordClawHubSkillInstall,
-} from "../skills/lifecycle/clawhub-store.js";
-import type {
-  guardTrackedSkillLocalState,
-  planClawHubSkillUninstall,
-  applyClawHubSkillUninstall,
-} from "../skills/lifecycle/clawhub-uninstall.js";
-import type { installSkillDependencies } from "../skills/lifecycle/install.js";
-import type { recordSkillSourceInstall } from "../skills/lifecycle/source-install-metadata.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { readPersistedMediaFacts, type MediaFact } from "../media/media-facts.js";
+import type { UserTurnTranscriptRecorder } from "../sessions/user-turn-transcript.types.js";
+import type { WorkspaceSkillLifecycle } from "../skills/lifecycle/workspace-types.js";
 import type {
   WorkspaceSkillSourceRequest,
   WorkspaceSkillSources,
-} from "../skills/loading/workspace-skill-sources.js";
-import type { SkillResourceSourceReader } from "../skills/runtime/resources.js";
-import type { EmbeddedRunAttemptParams } from "./embedded-agent-runner/run/types.js";
+} from "../skills/loading/workspace-skill-sources.types.js";
+import type { SkillResourceSourceReader } from "../skills/types.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.types.js";
 
-type WorkspaceAttachmentTurn = Pick<
-  EmbeddedRunAttemptParams,
-  "abortSignal" | "config" | "media" | "timeoutMs"
->;
+type WorkspaceAttachmentTurn = {
+  abortSignal?: AbortSignal;
+  config?: OpenClawConfig;
+  media?: MediaFact[];
+  timeoutMs: number;
+};
 
 /** Host-owned workspace files; callers keep their existing allowlists. */
 export type AgentWorkspaceAccess = {
   /** Execute a Gateway-approved dependency recipe on the workspace host. */
-  installSkillDependencies?: typeof installSkillDependencies;
+  installSkillDependencies?: WorkspaceSkillLifecycle["installSkillDependencies"];
   /** Native Memory file operations; indexing and session state remain on Gateway. */
   memoryFiles?: MemoryWorkspaceFiles;
   /** Read native source tiers and execution-host facts without applying Gateway policy. */
@@ -54,27 +38,12 @@ export type AgentWorkspaceAccess = {
   ) => Promise<void>;
   skillResources?: SkillResourceSourceReader;
   /** Transfer the source tree and apply it on the host; run beforeInstall on Gateway. */
-  applySkillRoot?: typeof applyExtractedSkillRoot;
-  recordSkillSourceInstall?: typeof recordSkillSourceInstall;
-  clawHubSkills?: {
-    planClawHubSkillUninstall: typeof planClawHubSkillUninstall;
-    applyClawHubSkillUninstall: (
-      plan: Parameters<typeof applyClawHubSkillUninstall>[0],
-      options: Pick<
-        NonNullable<Parameters<typeof applyClawHubSkillUninstall>[1]>,
-        "beforePersistentApply" | "beforeRollback" | "onCommittedChange"
-      >,
-    ) => ReturnType<typeof applyClawHubSkillUninstall>;
-    resolveClawHubSkillVerificationTarget: typeof resolveClawHubSkillVerificationTarget;
-    readClawHubSkillsLockfile: typeof readClawHubSkillsLockfile;
-    resolveRequestedUpdateSlug: typeof resolveRequestedUpdateSlug;
-    resolveTrackedUpdateTarget: typeof resolveTrackedUpdateTarget;
-    guardTrackedSkillLocalState: typeof guardTrackedSkillLocalState;
-    preflightSkillOwnerState: typeof preflightSkillOwnerState;
-    assertClawHubSkillInstallState: typeof assertClawHubSkillInstallState;
-    readInstalledClawHubSkillFiles: typeof readInstalledClawHubSkillFiles;
-    recordClawHubSkillInstall: typeof recordClawHubSkillInstall;
-  };
+  applySkillRoot?: WorkspaceSkillLifecycle["applyExtractedSkillRoot"];
+  recordSkillSourceInstall?: WorkspaceSkillLifecycle["recordSkillSourceInstall"];
+  clawHubSkills?: Omit<
+    WorkspaceSkillLifecycle,
+    "installSkillDependencies" | "applyExtractedSkillRoot" | "recordSkillSourceInstall"
+  >;
   bridge: Pick<
     SandboxFsBridge,
     "readFile" | "readFileWithSource" | "readDirectory" | "writeFile" | "stat"
@@ -517,7 +486,7 @@ export function captureAgentWorkspaceOutboundMedia(
 /** Prepare execution-only paths while retaining canonical media and transcript facts. */
 export async function prepareAgentWorkspaceAttachments(params: {
   workspaceDir: string;
-  turn: WorkspaceAttachmentTurn & Pick<EmbeddedRunAttemptParams, "userTurnTranscriptRecorder">;
+  turn: WorkspaceAttachmentTurn & { userTurnTranscriptRecorder?: UserTurnTranscriptRecorder };
   assertCurrent: () => void;
 }): Promise<string | undefined> {
   if (!params.turn.media?.length && !params.turn.userTurnTranscriptRecorder) {

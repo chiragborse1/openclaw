@@ -46,14 +46,10 @@ export {
   resolveClawHubSkillVerificationTarget,
   resolveLocalSkillCardStatusSync,
   searchSkillsFromClawHub,
-  type ClawHubSkillStatusLink,
-  type LocalSkillCardStatus,
 } from "./clawhub-status.js";
 export {
   readClawHubSkillsLockfileStatusSync,
   readTrackedClawHubSkillSlugs,
-  untrackClawHubSkill,
-  type ClawHubSkillsLockfileStatusRead,
 } from "./clawhub-store.js";
 
 export async function verifySkillWithClawHub(

@@ -29,7 +29,7 @@ import { loadSingleSkillDirectory } from "../loading/local-loader.js";
 import { createSyntheticSourceInfo, type Skill } from "../loading/skill-contract.js";
 import { shouldSyncSkillPath } from "../loading/skill-paths.js";
 import { formatSkillsForPromptBounded } from "../loading/skill-prompt-limits.js";
-import type { ExplicitSkillSelection, SkillSnapshot } from "../types.js";
+import type { ExplicitSkillSelection, SkillSnapshot, SkillResourceSourceReader } from "../types.js";
 
 const log = createSubsystemLogger("skills/resources");
 
@@ -51,18 +51,6 @@ function isMissingDiscoveredSkillRoot(error: unknown): error is SkillTreeDirecto
     isMissingPathError(error.cause)
   );
 }
-
-/** Filesystem reads run on the workspace host; catalog selection stays with the caller. */
-export type SkillResourceSourceReader = {
-  /** Read the instruction path selected by the run, without packaging supporting files. */
-  readInstructions: (filePath: string, options: { signal?: AbortSignal }) => Promise<string>;
-  resolveExplicitSkill: (selection: ExplicitSkillSelection) => Promise<Skill | null>;
-  /** Null means only the requested root vanished, and only when allowMissingRoot is true. */
-  readSkillFiles: (
-    skill: Skill,
-    options: { allowMissingRoot: boolean },
-  ) => Promise<SkillLibraryFile[] | null>;
-};
 
 export async function resolveExplicitSkillResource(
   selection: ExplicitSkillSelection,

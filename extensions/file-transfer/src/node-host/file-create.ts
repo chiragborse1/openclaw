@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import type { OpenClawPluginNodeHostCommandIo } from "openclaw/plugin-sdk/node-host";
 import {
   canonicalPathFromExistingAncestor,
+  extractErrorCode,
   FsSafeError,
   resolveAbsolutePathForWrite,
 } from "openclaw/plugin-sdk/security-runtime";
@@ -137,7 +138,7 @@ export async function handleFileCreate(
       return failure("NOT_FILE", "create target is not a regular file");
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+    if (extractErrorCode(error) !== "ENOENT") {
       throw error;
     }
   }

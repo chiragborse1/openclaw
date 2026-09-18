@@ -11,7 +11,6 @@ import { pathExists } from "../../infra/fs-safe.js";
 import { withExtractedArchiveRoot } from "../../infra/install-flow.js";
 import { installPackageDir } from "../../infra/install-package-dir.js";
 import { resolveSafeInstallDir } from "../../infra/install-safe-path.js";
-import type { PluginHookSkillArtifact } from "../../plugins/hook-types.js";
 import {
   evaluateSkillInstallPolicy,
   type InstallSecurityScanResult,
@@ -24,7 +23,16 @@ import {
   resolveCommittedSkillChangeSource,
   snapshotCommittedSkillArtifactBestEffort,
 } from "./skill-change-hook.js";
-import { checkClawHubSkillPlanAtPath, type ClawHubSkillFileState } from "./skill-tree-digest.js";
+import { checkClawHubSkillPlanAtPath } from "./skill-tree-digest.js";
+import type {
+  WorkspaceSkillLifecycle,
+  SkillArchiveInstallResult,
+  SkillArchiveInstallFailureKind,
+  SkillRootInstallFiles,
+  SkillRootApplyResult,
+} from "./workspace-types.js";
+
+export type { SkillArchiveInstallFailureKind } from "./workspace-types.js";
 
 const VALID_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i;
 const DEFAULT_SKILL_ARCHIVE_ROOT_MARKERS = ["SKILL.md"] as const;
@@ -53,18 +61,6 @@ type SkillArchiveInstallPolicy = {
   requestedSpecifier?: string;
   source?: InstallPolicySource;
 };
-
-/** Result shape for installing a skill archive into a workspace skills dir. */
-type SkillArchiveInstallResult =
-  | { ok: true; targetDir: string }
-  | {
-      ok: false;
-      error: string;
-      failureKind: SkillArchiveInstallFailureKind;
-      replacementBlocked?: string;
-    };
-
-export type SkillArchiveInstallFailureKind = "invalid-request" | "unavailable";
 
 /** Normalizes a tracked slug without accepting traversal or path separators. */
 export function normalizeTrackedSkillSlug(raw: string): string {
@@ -147,28 +143,6 @@ function archiveFailureKind(error: string): SkillArchiveInstallFailureKind {
   return "invalid-request";
 }
 
-type SkillRootInstallFiles = {
-  workspaceDir: string;
-  slug: string;
-  extractedRoot: string;
-  mode: "install" | "update";
-  timeoutMs?: number;
-  logger?: ArchiveLogger;
-  rootMarkers?: readonly string[];
-  /** Undefined skips the native update guard; null means the install was absent. */
-  expectedClawHubState?: ClawHubSkillFileState | null;
-};
-
-type SkillRootApplyResult =
-  | {
-      ok: true;
-      targetDir: string;
-      mode: "install" | "update";
-      before?: PluginHookSkillArtifact;
-      after?: PluginHookSkillArtifact;
-    }
-  | Extract<SkillArchiveInstallResult, { ok: false }>;
-
 export async function installExtractedSkillRoot(
   params: SkillRootInstallFiles & { policy?: SkillArchiveInstallPolicy },
 ): Promise<SkillArchiveInstallResult> {
@@ -236,15 +210,7 @@ export async function installExtractedSkillRoot(
 
 /** Native file replacement on the workspace host; policy and hook dispatch stay with the caller. */
 export async function applyExtractedSkillRoot(
-  params: SkillRootInstallFiles & {
-    changes?: {
-      source: ReturnType<typeof resolveCommittedSkillChangeSource>;
-      sourceVersion?: string;
-    };
-    beforeInstall?: (
-      mode: "install" | "update",
-    ) => Promise<{ error: string; failureKind: SkillArchiveInstallFailureKind } | undefined>;
-  },
+  params: Parameters<WorkspaceSkillLifecycle["applyExtractedSkillRoot"]>[0],
 ): Promise<SkillRootApplyResult> {
   try {
     if (

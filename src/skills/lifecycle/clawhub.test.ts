@@ -96,6 +96,7 @@ const {
   readClawHubSkillsLockfile,
   readInstalledClawHubSkillFiles,
   recordClawHubSkillInstall,
+  untrackClawHubSkill,
 } = await import("./clawhub-store.js");
 
 const { guardTrackedSkillLocalState, planClawHubSkillUninstall, applyClawHubSkillUninstall } =
@@ -141,7 +142,6 @@ const {
   resolveClawHubSkillStatusLinkSync,
   resolveClawHubSkillVerificationTarget,
   searchSkillsFromClawHub,
-  untrackClawHubSkill,
   updateSkillsFromClawHub,
 } = await import("./clawhub.js");
 

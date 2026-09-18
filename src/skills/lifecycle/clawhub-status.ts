@@ -11,7 +11,6 @@ import {
   CLAWHUB_SKILLS_SH_REF_PREFIX,
   searchClawHubSkills,
   type ClawHubSkillSearchResult,
-  type ClawHubSkillsShTrustState,
 } from "../../infra/clawhub-skills.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { pathExists } from "../../infra/fs-safe.js";
@@ -29,76 +28,26 @@ import {
   readClawHubSkillOriginStatusSync,
   readClawHubSkillOriginStrict,
   readClawHubSkillOrigin,
-  type ClawHubSkillsLockfile,
   readClawHubSkillsLockfile,
   readClawHubSkillsLockfileStatusSync,
-  type ClawHubSkillDownloadedArtifactLock,
-  type ClawHubSkillFileLock,
-  type ClawHubSkillRef,
   type ClawHubSkillsLockfileStatusRead,
 } from "./clawhub-store.js";
+import type {
+  WorkspaceSkillLifecycle,
+  ClawHubSkillStatusLink,
+  LocalSkillCardStatus,
+  ClawHubSkillVerificationSelector,
+  ClawHubSkillVerificationTargetResult,
+  ClawHubSkillInstallPreflightResult,
+  TrackedUpdateTarget,
+} from "./workspace-types.js";
+
+export type { ClawHubSkillInstallPreflightResult } from "./workspace-types.js";
 
 const LOCAL_SKILL_CARD_FILENAME = "skill-card.md";
 const LOCAL_SKILL_CARD_MAX_BYTES = 256 * 1024;
 
-export type ClawHubSkillStatusLink =
-  | {
-      status: "linked";
-      valid: true;
-      registry: string;
-      slug: string;
-      ownerHandle?: string;
-      requestedReference?: string;
-      trustState?: ClawHubSkillsShTrustState;
-      installedVersion: string;
-      installedAt: number;
-      originPath: string;
-      lockPath: string;
-      sourceUrl?: string;
-      artifact?: ClawHubSkillDownloadedArtifactLock;
-      skillFile?: ClawHubSkillFileLock;
-      fileTreeSha256?: string;
-    }
-  | {
-      status: "invalid";
-      valid: false;
-      reason: string;
-      registry?: string;
-      slug?: string;
-      installedVersion?: string;
-      installedAt?: number;
-      originPath?: string;
-      lockPath?: string;
-    };
-
-export type LocalSkillCardStatus = {
-  present: true;
-  path: string;
-  sizeBytes: number;
-};
-
 type LocalSkillCardRead = LocalSkillCardStatus & { content?: string };
-type ClawHubSkillVerificationSelector = "installed-version" | "version" | "tag" | "latest";
-
-type ClawHubSkillVerificationTargetResult =
-  | {
-      ok: true;
-      slug: string;
-      ownerHandle?: string;
-      requestedReference?: string;
-      trustState?: ClawHubSkillsShTrustState;
-      baseUrl: string;
-      version: string | undefined;
-      tag: string | undefined;
-      resolution: {
-        source: "installed" | "registry";
-        selector: ClawHubSkillVerificationSelector;
-        registry: string;
-        skillDir: string | undefined;
-        installedVersion: string | undefined;
-      };
-    }
-  | { ok: false; error: string };
 
 function readRealPathSync(candidate: string): string | undefined {
   try {
@@ -333,13 +282,9 @@ export async function searchSkillsFromClawHub(params: {
   });
 }
 
-export async function resolveClawHubSkillVerificationTarget(params: {
-  workspaceDir: string;
-  slug: string;
-  version?: string;
-  tag?: string;
-  baseUrl?: string;
-}): Promise<ClawHubSkillVerificationTargetResult> {
+export async function resolveClawHubSkillVerificationTarget(
+  params: Parameters<WorkspaceSkillLifecycle["resolveClawHubSkillVerificationTarget"]>[0],
+): Promise<ClawHubSkillVerificationTargetResult> {
   try {
     const access = getAgentWorkspaceAccess(params.workspaceDir);
     if (access) {
@@ -503,17 +448,9 @@ export async function resolveClawHubSkillVerificationTarget(params: {
   }
 }
 
-export type ClawHubSkillInstallPreflightResult =
-  | { ok: true; action: "install" | "reuse"; integrity: string; warning?: string }
-  | { ok: false; code: string; error: string };
-
-export async function preflightSkillOwnerState(params: {
-  workspaceDir: string;
-  requested: ClawHubSkillRef;
-  requestedLabel: string;
-  version: string;
-  integrity: string;
-}): Promise<ClawHubSkillInstallPreflightResult> {
+export async function preflightSkillOwnerState(
+  params: Parameters<WorkspaceSkillLifecycle["preflightSkillOwnerState"]>[0],
+): Promise<ClawHubSkillInstallPreflightResult> {
   const targetDir = resolveWorkspaceSkillInstallDir(params.workspaceDir, params.requested.slug);
   if (!(await pathExists(targetDir))) {
     return { ok: true, action: "install", integrity: params.integrity };
@@ -538,23 +475,9 @@ export async function preflightSkillOwnerState(params: {
   };
 }
 
-type TrackedUpdateTarget =
-  | {
-      ok: true;
-      slug: string;
-      ownerHandle?: string;
-      requestedReference?: string;
-      trustState?: ClawHubSkillsShTrustState;
-      baseUrl?: string;
-      previousVersion: string | null;
-    }
-  | { ok: false; slug: string; error: string };
-
-export async function resolveRequestedUpdateSlug(params: {
-  workspaceDir: string;
-  requestedSlug: string;
-  lock: ClawHubSkillsLockfile;
-}): Promise<string> {
+export async function resolveRequestedUpdateSlug(
+  params: Parameters<WorkspaceSkillLifecycle["resolveRequestedUpdateSlug"]>[0],
+): Promise<string> {
   const requested = params.requestedSlug.trim();
   const requestedRef =
     requested.startsWith("@") || requested.startsWith(CLAWHUB_SKILLS_SH_REF_PREFIX)
@@ -588,12 +511,9 @@ export async function resolveRequestedUpdateSlug(params: {
   return trackedSlug;
 }
 
-export async function resolveTrackedUpdateTarget(params: {
-  workspaceDir: string;
-  slug: string;
-  lock: ClawHubSkillsLockfile;
-  baseUrl?: string;
-}): Promise<TrackedUpdateTarget> {
+export async function resolveTrackedUpdateTarget(
+  params: Parameters<WorkspaceSkillLifecycle["resolveTrackedUpdateTarget"]>[0],
+): Promise<TrackedUpdateTarget> {
   const origin = await readClawHubSkillOrigin(
     resolveWorkspaceSkillInstallDir(params.workspaceDir, params.slug),
   );

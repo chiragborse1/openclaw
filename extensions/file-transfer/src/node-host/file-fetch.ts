@@ -1,7 +1,7 @@
 // File Transfer plugin module implements file fetch behavior.
 import crypto from "node:crypto";
 import path from "node:path";
-import { readFileHandleBounded } from "@openclaw/fs-safe/advanced";
+import { readFileHandleBounded } from "openclaw/plugin-sdk/file-access-runtime";
 import { detectMime } from "openclaw/plugin-sdk/media-mime";
 import type { OpenClawPluginNodeHostCommandIo } from "openclaw/plugin-sdk/node-host";
 import { FsSafeError, root } from "openclaw/plugin-sdk/security-runtime";

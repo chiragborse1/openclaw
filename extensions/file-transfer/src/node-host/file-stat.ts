@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { openRootFile } from "@openclaw/fs-safe/advanced";
+import { openRootFile } from "openclaw/plugin-sdk/file-access-runtime";
 import { asOptionalRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { fileIdentity, matchesFileIdentity, readPathBinding } from "../shared/path-binding.js";
 import {

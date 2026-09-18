@@ -88,8 +88,9 @@ export function isSkillFileWatchPath(watchPath: string): boolean {
 export function getRawWatchedPath(details: unknown): string | undefined {
   return typeof details === "object" &&
     details !== null &&
-    typeof (details as { watchedPath?: unknown }).watchedPath === "string"
-    ? (details as { watchedPath: string }).watchedPath
+    "watchedPath" in details &&
+    typeof details.watchedPath === "string"
+    ? details.watchedPath
     : undefined;
 }
 

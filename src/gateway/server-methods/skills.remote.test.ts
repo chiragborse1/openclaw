@@ -40,7 +40,7 @@ it("reads remote skill status, cards and binary requirements through the workspa
   await writeSkill({
     dir: path.join(remote, "skills", "installer"),
     name: "installer",
-    description: "Gateway dependency recipes",
+    description: "Workspace dependency recipes",
     metadata: JSON.stringify({
       openclaw: {
         install: [
@@ -87,10 +87,10 @@ it("reads remote skill status, cards and binary requirements through the workspa
             name: "available",
             eligible: true,
             platformIncompatible: false,
-            install: [],
+            install: [{ id: "host" }],
             skillCard: { present: true },
           },
-          { name: "installer", install: [{ id: "gateway" }] },
+          { name: "installer", install: [{ id: "brew" }] },
           { name: "missing", eligible: false, missing: { bins: ["absent-tool"] } },
         ],
       },
