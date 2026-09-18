@@ -20,7 +20,11 @@ import { runMemoryKeywordSearch } from "./manager-cpu-worker-runtime.js";
 import { MemoryProviderLifecycle } from "./manager-provider-lifecycle.js";
 import { prepareExactPathMatcher, type ExactPathSpecificity } from "./manager-search.js";
 import { loadMemorySourceFileState } from "./manager-source-state.js";
-import { applyProjectRanking, projectScoreMultiplier } from "./project-ranking.js";
+import {
+  applyProjectRanking,
+  prepareActiveProjectKeys,
+  projectScoreMultiplier,
+} from "./project-ranking.js";
 import { applyTemporalDecayToHybridResults } from "./temporal-decay.js";
 
 const SNIPPET_MAX_CHARS = 700;
@@ -192,12 +196,13 @@ export abstract class MemoryKeywordRetrieval extends MemoryProviderLifecycle {
       sessionSourceMtimes: this.loadSessionSourceMtimes(params.results),
     });
     // Preserve specificity and adjusted body relevance before normalizing exact public scores.
-    const ranked = applyProjectRanking(applyImportanceMultiplier(decayed), params.activeProjectKeys)
+    const activeProjects = prepareActiveProjectKeys(params.activeProjectKeys);
+    const ranked = applyProjectRanking(applyImportanceMultiplier(decayed), activeProjects)
       .toSorted((left, right) => compareKeywordSearchHits(left, right, !appliesTemporalDecay))
       .map((entry) =>
         entry.exactPathSpecificity > 0
           ? Object.assign(entry, {
-              score: projectScoreMultiplier(entry.projectKey, params.activeProjectKeys),
+              score: projectScoreMultiplier(entry.projectKey, activeProjects),
             })
           : entry,
       );

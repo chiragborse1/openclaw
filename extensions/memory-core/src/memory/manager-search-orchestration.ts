@@ -29,7 +29,7 @@ import { MemoryKeywordRetrieval, type KeywordSearchHit } from "./manager-keyword
 import { runVectorKnnInSubprocess } from "./manager-search-knn-subprocess.js";
 import { resolveMemorySearchPreflight } from "./manager-search-preflight.js";
 import { prepareExactPathMatcher, searchVector } from "./manager-search.js";
-import { applyProjectRanking } from "./project-ranking.js";
+import { applyProjectRanking, prepareActiveProjectKeys } from "./project-ranking.js";
 import { applyTemporalDecayToHybridResults } from "./temporal-decay.js";
 
 const SNIPPET_MAX_CHARS = 700;
@@ -482,7 +482,8 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
           sessionSourceMtimes: this.loadSessionSourceMtimes(vectorResults),
         });
         // Decay and importance can reverse the order returned by vector retrieval.
-        return applyProjectRanking(applyImportanceMultiplier(decayed), opts?.activeProjectKeys)
+        const activeProjects = prepareActiveProjectKeys(opts?.activeProjectKeys);
+        return applyProjectRanking(applyImportanceMultiplier(decayed), activeProjects)
           .filter((entry) => entry.score >= minScore)
           .toSorted(
             (left, right) =>

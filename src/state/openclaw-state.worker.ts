@@ -59,6 +59,7 @@ import {
   listProjectRegistryInDatabase,
   removeProjectRegistryInDatabase,
   resolveProjectCloneRefreshOwnerInDatabase,
+  resolveProjectRegistryInDatabase,
   resolveRecordedProjectRootInDatabase,
 } from "../projects/project-registry.kernel.js";
 import {
@@ -419,6 +420,10 @@ function createSharedStateWorkerBackend(
       if (command.type === "projects.list") {
         ensureProjectRegistrySchema(writeOptions);
         return listProjectRegistryInDatabase(database.db);
+      }
+      if (command.type === "projects.resolve") {
+        ensureProjectRegistrySchema(writeOptions);
+        return resolveProjectRegistryInDatabase(database.db, command.input.id);
       }
       if (command.type === "projects.insert") {
         ensureProjectRegistrySchema(writeOptions);

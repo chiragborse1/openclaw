@@ -58,6 +58,7 @@ import {
   OPENCLAW_STATE_SCHEMA_VERSION,
 } from "./openclaw-state-db-contract.js";
 import type { OpenClawStateSchemaReadAdmission } from "./openclaw-state-db-contract.js";
+import { assertNoLegacyStateRuntimeRepair } from "./openclaw-state-db-fast-path.js";
 import {
   assertOpenClawStateDatabaseOwner,
   assertOpenClawStateDatabaseForMaintenance,
@@ -294,6 +295,7 @@ export async function preflightOpenClawStateDatabasePath(
     if (blockingIssues.length > 0) {
       return result("incompatible", { issues: blockingIssues });
     }
+    assertNoLegacyStateRuntimeRepair(database, resolvedPath);
     return result(startupRepairableIssues.length > 0 ? "startup-repairable" : "exact", {
       issues: startupRepairableIssues,
       requiresWrite: startupRepairableIssues.length > 0,

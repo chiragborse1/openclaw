@@ -5,6 +5,7 @@ import { SQLITE_READONLY_CHILD_ARG } from "./runtime-process-entrypoints.js";
 import { formatSqliteErrorCodeSuffix } from "./sqlite-error-diagnostics.js";
 import { releaseSnapshotTempDirectory } from "./sqlite-readonly-location-cleanup.js";
 import {
+  createOnlineReadOnlyBackup,
   prepareSqliteReadOnlyLocationInProcess,
   prepareSqliteReadOnlyLocationSyncInProcess,
 } from "./sqlite-readonly-location.js";
@@ -21,7 +22,10 @@ async function inspect(args: string[]): Promise<SqliteReadOnlyWorkerResult> {
   const mode = args[0];
   const pathname = args[1];
   const stagingRoot = args[2];
-  if ((mode !== "sync" && mode !== "async" && mode !== "reclaim") || !pathname) {
+  if (
+    (mode !== "sync" && mode !== "async" && mode !== "consolidated" && mode !== "reclaim") ||
+    !pathname
+  ) {
     return {
       ok: false,
       message: "SQLite read-only worker requires a mode and a database path",
@@ -59,6 +63,18 @@ async function inspect(args: string[]): Promise<SqliteReadOnlyWorkerResult> {
         process.stdin.destroy();
       }
       return { ok: true, warnings };
+    }
+    if (mode === "consolidated") {
+      if (!stagingRoot || path.dirname(path.resolve(pathname)) !== path.resolve(stagingRoot)) {
+        throw new Error(
+          "SQLite consolidation requires its caller-owned private snapshot directory",
+        );
+      }
+      // The backup owner admits a child staging token before reading the private
+      // WAL family. Parent loss cannot let reclamation race its native backup.
+      const prepared = await createOnlineReadOnlyBackup(pathname, stagingRoot);
+      releaseSnapshotTempDirectory(prepared.cleanupRoot ?? path.dirname(prepared.location));
+      return { ok: true, location: prepared.location };
     }
     const prepared =
       mode === "sync"
