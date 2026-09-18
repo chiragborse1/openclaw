@@ -7,9 +7,11 @@ import * as configRuntime from "../../config/config.js";
 import { resolveSessionStorePathCore } from "../../config/sessions/paths.js";
 import * as sessionAccessor from "../../config/sessions/session-accessor.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../../config/sessions/session-sqlite-target.js";
+import { SessionStoreSummaryReadError } from "../../config/sessions/session-store-summary-error.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   closeOpenClawAgentDatabasesForTest,
+  closeOpenClawAgentDatabasesAsync,
   resolveOpenClawAgentSqlitePath,
 } from "../../state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
@@ -35,8 +37,9 @@ async function summarizeStore(storePath: string, agentId: string) {
 describe("health session store paths", () => {
   const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.restoreAllMocks();
+    await closeOpenClawAgentDatabasesAsync();
     closeOpenClawAgentDatabasesForTest();
     closeOpenClawStateDatabaseForTest();
   });
@@ -190,7 +193,7 @@ describe("health session store paths", () => {
         agents: { ownership: "explicit", entries: { helper: {}, third: {} } },
         session: { store: storeTemplate },
       });
-      const reads = vi.spyOn(sessionAccessor, "readSessionStoreSummaryReadOnly");
+      const reads = vi.spyOn(sessionAccessor, "readSessionStoreSummaryAsync");
       const collect = () => collectGatewayHealthSnapshot({ audience: "admin", probe: false });
       const summary = await collect();
       expect(summary.agents.map((agent) => [agent.agentId, agent.sessions.count])).toEqual([
@@ -200,9 +203,11 @@ describe("health session store paths", () => {
       expect(summary.sessions).toEqual(summary.agents[0]?.sessions);
       expect(reads).toHaveBeenCalledTimes(layout === "shared" ? 1 : 2);
 
-      reads.mockClear().mockImplementationOnce(() => {
-        throw Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" });
-      });
+      reads
+        .mockClear()
+        .mockRejectedValueOnce(
+          new SessionStoreSummaryReadError(new Error("database is locked"), true),
+        );
       expect((await collect()).agents.map((agent) => agent.sessions.count)).toEqual([0, 0]);
       expect(reads).toHaveBeenCalledTimes(layout === "shared" ? 1 : 2);
       expect((await collect()).agents.map((agent) => agent.sessions.count)).toEqual([1, 0]);

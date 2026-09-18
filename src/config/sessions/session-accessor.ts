@@ -163,7 +163,7 @@ export {
   patchSessionEntryTarget,
   patchSessionEntryWithKey,
   readSessionUpdatedAtCore,
-  readSessionStoreSummaryReadOnly,
+  readSessionStoreSummaryAsync,
   replaceSessionEntry,
   replaceSessionEntrySync,
   resolveSessionEntryAccessTarget,

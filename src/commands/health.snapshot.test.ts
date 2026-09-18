@@ -1005,8 +1005,8 @@ describe("collectGatewayHealthSnapshot", () => {
       { agentId: "ops", path: path.join(storeDir, "openclaw-agent.ops.sqlite") },
     ]);
     expect(listHealthSessionEntriesCalls).toEqual([
-      { agentId: "main", storePath: sessionStorePath },
-      { agentId: "ops", storePath: sessionStorePath },
+      { agentId: "main", storePath: path.join(storeDir, "openclaw-agent.sqlite") },
+      { agentId: "ops", storePath: path.join(storeDir, "openclaw-agent.ops.sqlite") },
     ]);
   });
 });

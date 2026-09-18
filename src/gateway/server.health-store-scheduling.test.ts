@@ -87,7 +87,7 @@ test.each(["separate", "shared", "single", "empty"] as const)(
       const { ws } = await harness.openClient();
       await rpcReq(ws, "health", { probe: true });
       await requestHealth();
-      const originalRead = sessionAccessor.readSessionStoreSummaryReadOnly;
+      const originalRead = sessionAccessor.readSessionStoreSummaryAsync;
       let inserted = false;
       for (const method of ["health", "status"] as const) {
         let reads = 0;
@@ -96,9 +96,9 @@ test.each(["separate", "shared", "single", "empty"] as const)(
         let write: Promise<void> | undefined;
         const completedReads: number[] = [];
         const read = vi
-          .spyOn(sessionAccessor, "readSessionStoreSummaryReadOnly")
-          .mockImplementation((...args) => {
-            const result = originalRead(...args);
+          .spyOn(sessionAccessor, "readSessionStoreSummaryAsync")
+          .mockImplementation(async (...args) => {
+            const result = await originalRead(...args);
             // Exercise costly reads independently of the host's SQLite cache warmth.
             readWorkMs += 20;
             reads += 1;
@@ -175,7 +175,7 @@ test.each(["separate", "shared", "single", "empty"] as const)(
         }
       }
       if (layout === "shared") {
-        const read = vi.spyOn(sessionAccessor, "readSessionStoreSummaryReadOnly");
+        const read = vi.spyOn(sessionAccessor, "readSessionStoreSummaryAsync");
         try {
           read.mockImplementationOnce(() => {
             throw Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" });
@@ -222,7 +222,7 @@ test.each(["separate", "shared", "single", "empty"] as const)(
           ],
           { source: "startup" },
         );
-        const read = vi.spyOn(sessionAccessor, "readSessionStoreSummaryReadOnly");
+        const read = vi.spyOn(sessionAccessor, "readSessionStoreSummaryAsync");
         try {
           const response = await rpcReq<HealthSummary>(ws, "health", { probe: true });
           expect(response.payload?.agents.at(-1)?.sessions.count).toBe(0);
@@ -249,9 +249,9 @@ test.each(["separate", "shared", "single", "empty"] as const)(
           }
         });
         const closingRead = vi
-          .spyOn(sessionAccessor, "readSessionStoreSummaryReadOnly")
-          .mockImplementationOnce((...args) => {
-            const result = originalRead(...args);
+          .spyOn(sessionAccessor, "readSessionStoreSummaryAsync")
+          .mockImplementationOnce(async (...args) => {
+            const result = await originalRead(...args);
             readWorkMs += 20;
             setImmediate(() => {
               lifecycle.push("closing");

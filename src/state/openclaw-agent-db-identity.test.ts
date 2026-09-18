@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   isOpenClawAgentDatabasePathCurrent,
   readOpenClawAgentDatabaseIdentity,
@@ -102,6 +102,28 @@ it("retains cold existing stores read-only without registering or creating missi
   expect(fs.existsSync(path.dirname(missing))).toBe(false);
 });
 
+it("retries a retained reader's failed native close without restoring its claim", () => {
+  const database = openOpenClawAgentDatabase({ agentId: "main", env });
+  closeOpenClawAgentDatabaseByPath(database.path);
+  const retained = retain(database.path);
+  const close = vi.spyOn(retained.database.db, "close").mockImplementationOnce(() => {
+    throw new Error("native reader close failed");
+  });
+  try {
+    expect(() => retained.close()).toThrow("native reader close failed");
+    expect(retained.claim.isCurrent()).toBe(false);
+    expect(retained.database.db.isOpen).toBe(true);
+    retained.close();
+    expect(retained.database.db.isOpen).toBe(false);
+    expect(retained.claim.isCurrent()).toBe(false);
+    retained.close();
+    expect(close).toHaveBeenCalledTimes(2);
+  } finally {
+    close.mockRestore();
+    retained.close();
+  }
+});
+
 it.runIf(typeof DatabaseSync.prototype.deserialize === "function")(
   "preserves file identity after failed deserialization but rejects a successful in-memory replacement",
   () => {
@@ -140,12 +162,14 @@ it.runIf(typeof DatabaseSync.prototype.deserialize === "function")(
 
 it("releases only one warm claim while revoking its retained copies", () => {
   const database = openOpenClawAgentDatabase({ agentId: "main", env });
-  const { claim: first } = retain(database.path);
+  const retained = retain(database.path);
+  const first = retained.claim;
   const { claim: second } = retain(database.path);
   expect(first.incarnation).toBe(second.incarnation);
   const assertCurrent = first.assertCurrent;
+  retained.close();
   first.release();
-  first.release();
+  retained.close();
   expect(() => assertCurrent()).toThrow("no longer current");
   expect(second.isCurrent()).toBe(true);
   expect(database.db.isOpen).toBe(true);

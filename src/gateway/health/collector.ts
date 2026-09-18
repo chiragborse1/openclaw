@@ -104,22 +104,35 @@ export function resolveHealthAgentOrder(cfg: OpenClawConfig) {
   return { defaultAgentId, ordered };
 }
 
-async function createHealthSessionStoreReader(agentIds: readonly string[]) {
+async function createHealthSessionStoreReader(
+  storeTemplate: string | undefined,
+  agentIds: readonly (string | undefined)[],
+) {
   const { createStatusSessionStoreReader } = await import("../../status/session-stores.js");
-  const { readSessionStoreSummaryReadOnly } =
+  const { readSessionStoreSummaryAsync } =
     await import("../../config/sessions/session-accessor.js");
+  const { SessionStoreSummaryReadError } =
+    await import("../../config/sessions/session-store-summary-error.js");
   const { isTransientSqliteError } = await import("../../infra/unhandled-rejections.js");
-  return createStatusSessionStoreReader(agentIds, HEALTH_RECENT_SESSION_LIMIT, (scope, options) => {
-    try {
-      return readSessionStoreSummaryReadOnly(scope, options);
-    } catch (error) {
-      if (!isTransientSqliteError(error)) {
-        throw error;
+  return createStatusSessionStoreReader(
+    storeTemplate,
+    agentIds,
+    HEALTH_RECENT_SESSION_LIMIT,
+    async (scope, options) => {
+      try {
+        return await readSessionStoreSummaryAsync(scope, options);
+      } catch (error) {
+        if (
+          !(error instanceof SessionStoreSummaryReadError && error.transientSqlite) &&
+          !isTransientSqliteError(error)
+        ) {
+          throw error;
+        }
+        // Health is best-effort: one empty snapshot beats repeated transient lock failures.
+        return { count: 0, recent: [], byAgent: new Map() };
       }
-      // Health is best-effort: one empty snapshot beats repeated transient lock failures.
-      return { count: 0, recent: [], byAgent: new Map() };
-    }
-  });
+    },
+  );
 }
 
 function projectHealthSessions(
@@ -139,8 +152,8 @@ function projectHealthSessions(
 }
 
 async function buildHealthSessionSummary(storePath: string, agentId?: string) {
-  const reader = await createHealthSessionStoreReader(agentId ? [agentId] : []);
-  const store = await reader.read(storePath, agentId);
+  const reader = await createHealthSessionStoreReader(storePath, [agentId]);
+  const store = await reader.read(agentId);
   return projectHealthSessions(store.path, store);
 }
 
@@ -150,16 +163,13 @@ export async function buildHealthAgentSummaries(
   { defaultAgentId, ordered }: ReturnType<typeof resolveHealthAgentOrder>,
 ): Promise<AgentHealthSummary[]> {
   const agentIds = ordered.map((entry) => entry.id);
-  const reader = await createHealthSessionStoreReader(agentIds);
+  const reader = await createHealthSessionStoreReader(cfg.session?.store, agentIds);
   // One roster pass for every agent: per-agent resolution re-walks the roster
   // and froze large fleets for tens of seconds each refresh (#137570).
   const heartbeats = resolveHeartbeatSummariesForAgents(cfg, agentIds);
   const agents: AgentHealthSummary[] = [];
   for (const [index, entry] of ordered.entries()) {
-    const store = await reader.read(
-      resolveSessionStorePathCore(cfg.session?.store, { agentId: entry.id }),
-      entry.id,
-    );
+    const store = await reader.read(entry.id);
     agents.push({
       agentId: entry.id,
       name: entry.name,

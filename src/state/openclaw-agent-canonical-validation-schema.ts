@@ -56,6 +56,12 @@ function expectedDefinitions(): Map<string, string | null> {
   );
 }
 
+/** Bounded callers may reuse only this native connection's still-current schema proof. */
+export function hasCurrentCanonicalSessionValidationSchema(database: DatabaseSync): boolean {
+  const cached = validatedSchemas.get(database);
+  return cached !== undefined && cached.cookie === readSqliteSchemaCookie(database);
+}
+
 /** Require the exact invalidation group before an empty pending set can certify readiness. */
 export function assertCanonicalSessionValidationSchema(database: DatabaseSync): void {
   const cookie = readSqliteSchemaCookie(database);

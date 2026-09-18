@@ -51,9 +51,9 @@ export async function loadFreshHealthModulesForTest(params: {
     resolveSessionStorePathCore: params.getSessionStorePath,
   }));
   vi.doMock("../config/sessions/session-accessor.js", () => ({
-    readSessionStoreSummaryReadOnly: (
+    readSessionStoreSummaryAsync: async (
       ...[scope, options]: Parameters<
-        typeof import("../config/sessions/session-accessor.js").readSessionStoreSummaryReadOnly
+        typeof import("../config/sessions/session-accessor.js").readSessionStoreSummaryAsync
       >
     ) => {
       params.onSessionRead?.(scope);

@@ -16,8 +16,12 @@ import {
   upsertSessionEntryCore,
 } from "../config/sessions/session-accessor.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
+import { buildHealthAgentSummaries, resolveHealthAgentOrder } from "../gateway/health/collector.js";
 import { getActivePluginRegistry, setActivePluginRegistry } from "../plugins/runtime.js";
-import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
+import {
+  closeOpenClawAgentDatabasesAsync,
+  closeOpenClawAgentDatabasesForTest,
+} from "../state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { getStatusSummary } from "../status/summary.js";
 import {
@@ -57,8 +61,9 @@ describe("getStatusSummary read-only session access", () => {
     setActivePluginRegistry(createTestRegistry());
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     cliBackendsTesting.resetDepsForTest();
+    await closeOpenClawAgentDatabasesAsync();
     closeOpenClawAgentDatabasesForTest();
     closeOpenClawStateDatabaseForTest();
   });
@@ -139,7 +144,7 @@ describe("getStatusSummary read-only session access", () => {
           (agentId) => resolveSqliteTargetFromSessionStorePath(storePath, { agentId }).path,
         );
         const uniquePaths = [...new Set(expectedPaths)];
-        const readSummary = vi.spyOn(sessionAccessor, "readSessionStoreSummaryReadOnly");
+        const readSummary = vi.spyOn(sessionAccessor, "readSessionStoreSummaryAsync");
         const now = vi.spyOn(Date, "now").mockReturnValue(100);
         try {
           const summary = await getStatusSummary({ includeChannelSummary: false, config });
@@ -180,11 +185,112 @@ describe("getStatusSummary read-only session access", () => {
           now.mockRestore();
         }
       } finally {
+        await closeOpenClawAgentDatabasesAsync();
         closeOpenClawAgentDatabasesForTest();
         closeOpenClawStateDatabaseForTest();
       }
     },
   );
+
+  it("bounds mixed-store summary rosters while retaining complete health and status summaries", async () => {
+    await withOpenClawTestState({ prefix: "openclaw-status-mixed-stores-" }, async (state) => {
+      const template = state.path("{agentId}.sqlite");
+      const shared = state.path("shared.sqlite");
+      const separate = state.path("solo.sqlite");
+      const paths = new Map([
+        ["main", shared],
+        ["ops", `${state.path("alias")}/../shared.sqlite`],
+        ["solo", separate],
+      ]);
+      const sessionPaths = await import("../config/sessions/paths.js");
+      const resolveStore = sessionPaths.resolveSessionStorePathCore;
+      const resolve = vi
+        .spyOn(sessionPaths, "resolveSessionStorePathCore")
+        .mockImplementation((store, options) =>
+          store === template && options?.agentId
+            ? (paths.get(options.agentId) ?? resolveStore(store, options))
+            : resolveStore(store, options),
+        );
+      const now = vi.spyOn(Date, "now").mockReturnValue(100);
+      const reads = vi.spyOn(sessionAccessor, "readSessionStoreSummaryAsync");
+      const assertStoreRosters = () => {
+        expect(
+          reads.mock.calls.map(([scope, options]) => [scope.storePath, options.agentIds]),
+        ).toEqual([
+          [shared, ["main", "ops"]],
+          [separate, ["solo"]],
+        ]);
+      };
+      const config = {
+        agents: {
+          ownership: "explicit" as const,
+          defaults: { heartbeat: { every: "0m" } },
+          entries: { main: {}, ops: {}, solo: {} },
+        },
+        session: { store: template },
+      };
+      try {
+        for (const [agentId, storePath, updatedAt] of [
+          ["main", shared, 10],
+          ["ops", shared, 20],
+          ["solo", separate, 30],
+          ["retired", shared, 40],
+        ] as const) {
+          replaceSessionEntrySync(
+            { agentId, storePath, sessionKey: `agent:${agentId}:main` },
+            { sessionId: `${agentId}-session`, updatedAt },
+          );
+        }
+        closeOpenClawAgentDatabasesForTest();
+        reads.mockClear();
+
+        const summary = await getStatusSummary({ config, includeChannelSummary: false });
+
+        expect(summary.sessions.paths).toEqual([shared, separate]);
+        expect(summary.sessions.count).toBe(4);
+        expect(summary.sessions.recent.map(({ key }) => key)).toEqual([
+          "agent:retired:main",
+          "agent:solo:main",
+          "agent:ops:main",
+          "agent:main:main",
+        ]);
+        expect(
+          summary.sessions.byAgent.map(({ agentId, path: storePath, count, recent }) => [
+            agentId,
+            storePath,
+            count,
+            recent.map(({ key, updatedAt }) => [key, updatedAt]),
+          ]),
+        ).toEqual([
+          ["main", shared, 1, [["agent:main:main", 10]]],
+          ["ops", shared, 1, [["agent:ops:main", 20]]],
+          ["solo", separate, 1, [["agent:solo:main", 30]]],
+        ]);
+        assertStoreRosters();
+        reads.mockClear();
+
+        const health = await buildHealthAgentSummaries(config, resolveHealthAgentOrder(config));
+
+        expect(
+          health.map(({ agentId, sessions }) => [
+            agentId,
+            sessions.path,
+            sessions.count,
+            sessions.recent.map(({ key, updatedAt, age }) => [key, updatedAt, age]),
+          ]),
+        ).toEqual([
+          ["main", shared, 1, [["agent:main:main", 10, 90]]],
+          ["ops", shared, 1, [["agent:ops:main", 20, 80]]],
+          ["solo", separate, 1, [["agent:solo:main", 30, 70]]],
+        ]);
+        assertStoreRosters();
+      } finally {
+        reads.mockRestore();
+        now.mockRestore();
+        resolve.mockRestore();
+      }
+    });
+  });
 
   it("does not reread ambient config while projecting prepared session runtime state", async () => {
     await withOpenClawTestState(
@@ -231,7 +337,7 @@ describe("getStatusSummary read-only session access", () => {
           },
         );
       }
-      const readSummary = vi.spyOn(sessionAccessor, "readSessionStoreSummaryReadOnly");
+      const readSummary = vi.spyOn(sessionAccessor, "readSessionStoreSummaryAsync");
       try {
         const { scanStatus } = await import("../commands/status.scan.js");
         const timeline = state.path("status-timeline.jsonl");
@@ -365,7 +471,7 @@ describe("getStatusSummary read-only session access", () => {
         }
         closeOpenClawAgentDatabasesForTest();
 
-        const stored = sessionAccessor.readSessionStoreSummaryReadOnly(
+        const stored = await sessionAccessor.readSessionStoreSummaryAsync(
           { agentId: "main", storePath },
           { agentIds: ["main", "ops"], recentLimit: 10 },
         );
@@ -391,7 +497,7 @@ describe("getStatusSummary read-only session access", () => {
     },
   );
 
-  it("bounds session payload hydration to the recent status window", async () => {
+  it("hydrates the recent status window outside the caller thread", async () => {
     await withOpenClawTestState({ prefix: "openclaw-status-recent-window-" }, async (state) => {
       const config = {
         agents: { defaults: { heartbeat: { every: "0m" } }, entries: { main: {} } },
@@ -420,7 +526,7 @@ describe("getStatusSummary read-only session access", () => {
       try {
         const summary = await getStatusSummary({ config, includeChannelSummary: false });
 
-        expect(parsedSessionPayloads()).toHaveLength(10);
+        expect(parsedSessionPayloads()).toHaveLength(0);
         expect(summary.sessions.count).toBe(24);
         expect(summary.sessions.byAgent[0]?.count).toBe(24);
         expect(summary.sessions.recent.map(({ key }) => key)).toEqual(

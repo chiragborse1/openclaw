@@ -62,7 +62,7 @@ function bindValidationLifetime(
   validationBindings.set(database.db, { validation, unregister });
 }
 
-function matchesValidation(
+export function isOpenClawAgentDatabaseValidationCurrent(
   database: ValidationDatabase,
   validation: OpenClawAgentDatabaseValidation,
 ): boolean {
@@ -77,7 +77,7 @@ export function getOpenClawAgentDatabaseValidation(
   database: ValidationDatabase,
 ): OpenClawAgentDatabaseValidation | undefined {
   const validation = validatedPaths.get(path.resolve(database.path));
-  if (!validation || !matchesValidation(database, validation)) {
+  if (!validation || !isOpenClawAgentDatabaseValidationCurrent(database, validation)) {
     return undefined;
   }
   bindValidationLifetime(database, validation);
@@ -134,7 +134,7 @@ export function adoptOpenClawAgentDatabaseValidation(
   database: ValidationDatabase,
   validation: OpenClawAgentDatabaseValidation,
 ): boolean {
-  if (!matchesValidation(database, validation)) {
+  if (!isOpenClawAgentDatabaseValidationCurrent(database, validation)) {
     return false;
   }
   // A concurrent first opener can return another healthy receipt. Keep the

@@ -17,7 +17,7 @@ let testConfig: OpenClawConfig = {};
 let healthPluginsForTest: ChannelPlugin[] = [];
 const tempDirs = createTempDirTracker();
 let sessionStorePath: string;
-const readSessionStoreSummaryReadOnly = vi.fn(() => ({
+const readSessionStoreSummaryAsync = vi.fn(async () => ({
   count: 0,
   recent: [],
   byAgent: new Map(),
@@ -78,7 +78,7 @@ describe("gateway health collection deadline", () => {
       resolveSessionStorePathCore: () => sessionStorePath,
     }));
     vi.doMock("../../config/sessions/session-accessor.js", () => ({
-      readSessionStoreSummaryReadOnly,
+      readSessionStoreSummaryAsync,
     }));
     vi.doMock("../../channels/plugins/read-only.js", () => ({
       listReadOnlyChannelPluginsForConfig: () => healthPluginsForTest,
@@ -96,7 +96,7 @@ describe("gateway health collection deadline", () => {
       tempDirs.make("openclaw-health-deadline-sessions-"),
       "sessions.json",
     );
-    readSessionStoreSummaryReadOnly.mockReset();
+    readSessionStoreSummaryAsync.mockReset();
     testConfig = {};
     healthPluginsForTest = [];
     await collectGatewayHealthSnapshot({ audience: "admin", probe: false, timeoutMs: 50 });
@@ -111,7 +111,7 @@ describe("gateway health collection deadline", () => {
     vi.useFakeTimers();
     const probe = vi.fn(async () => ({ ok: true }));
     healthPluginsForTest = [createDeadlinePlugin({ accountIds: ["default"], probe })];
-    readSessionStoreSummaryReadOnly.mockImplementationOnce(() => {
+    readSessionStoreSummaryAsync.mockImplementationOnce(async () => {
       vi.advanceTimersByTime(50);
       return { count: 0, recent: [], byAgent: new Map() };
     });

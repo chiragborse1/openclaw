@@ -107,12 +107,12 @@ vi.mock("../config/sessions/paths.js", () => ({
 
 vi.mock("../config/sessions/session-accessor.js", () => ({
   loadExactSessionEntryReadOnly: statusSummaryMocks.loadExactSessionEntryReadOnly,
-  readSessionStoreSummaryReadOnly: (
+  readSessionStoreSummaryAsync: async (
     scope: Parameters<
-      typeof import("../config/sessions/session-accessor.js").readSessionStoreSummaryReadOnly
+      typeof import("../config/sessions/session-accessor.js").readSessionStoreSummaryAsync
     >[0],
     options: Parameters<
-      typeof import("../config/sessions/session-accessor.js").readSessionStoreSummaryReadOnly
+      typeof import("../config/sessions/session-accessor.js").readSessionStoreSummaryAsync
     >[1],
   ) => {
     const entries = statusSummaryMocks
@@ -737,7 +737,7 @@ describe("getStatusSummary", () => {
     });
   });
 
-  it("passes agent scope when listing configured agent session stores", async () => {
+  it("passes the prepared physical store and logical agent when listing sessions", async () => {
     vi.mocked(listGatewayAgentsBasic).mockReturnValue({
       defaultId: "main",
       ownership: "sole",
@@ -763,11 +763,11 @@ describe("getStatusSummary", () => {
 
     expect(statusSummaryMocks.listSessionEntriesCore).toHaveBeenCalledWith({
       agentId: "main",
-      storePath: "/tmp/main/sessions.json",
+      storePath: "/tmp/main/openclaw-agent.sqlite",
     });
     expect(statusSummaryMocks.listSessionEntriesCore).toHaveBeenCalledWith({
       agentId: "ops",
-      storePath: "/tmp/ops/sessions.json",
+      storePath: "/tmp/ops/openclaw-agent.ops.sqlite",
     });
     expect(summary.sessions.count).toBe(2);
     expect(summary.sessions.byAgent.map((agent) => [agent.agentId, agent.count])).toEqual([

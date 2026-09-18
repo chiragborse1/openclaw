@@ -56,28 +56,40 @@ function findOpenAgentDatabase(
 }
 
 /** Retain an existing store across awaits without materializing a writable database. */
-export function retainOpenClawAgentDatabaseReadOnly(
-  options: OpenClawAgentDatabaseOptions,
-):
-  | { found: true; database: OpenClawAgentReadOnlyDatabase; claim: OpenClawAgentDatabaseClaim }
+export function retainOpenClawAgentDatabaseReadOnly(options: OpenClawAgentDatabaseOptions):
+  | {
+      found: true;
+      database: OpenClawAgentReadOnlyDatabase;
+      claim: OpenClawAgentDatabaseClaim;
+      close: () => void;
+    }
   | { found: false; reason: "database-missing" | "schema-missing" } {
   const opened = findOpenAgentDatabase(options);
   if (opened && !opened.db.isTransaction) {
     const borrowed = borrowOpenClawAgentDatabase(options);
+    const claim = createOpenClawAgentDatabaseClaim(opened, borrowed.release);
     return {
       found: true,
       database: opened,
-      claim: createOpenClawAgentDatabaseClaim(opened, borrowed.release),
+      claim,
+      close: claim.release,
     };
   }
   const fresh = openOpenClawAgentDatabaseReadOnly(options);
-  return fresh.found
-    ? {
-        found: true,
-        database: fresh.database,
-        claim: createOpenClawAgentDatabaseClaim(fresh.database, fresh.database.close),
-      }
-    : fresh;
+  if (!fresh.found) {
+    return fresh;
+  }
+  const claim = createOpenClawAgentDatabaseClaim(fresh.database, fresh.database.close);
+  return {
+    found: true,
+    database: fresh.database,
+    claim,
+    close: () => {
+      claim.release();
+      // Revocation is once-only; a failed native close remains retryable at its owner.
+      fresh.database.close();
+    },
+  };
 }
 
 /** Read agent state without creating, registering, migrating, or joining its writable lifecycle. */

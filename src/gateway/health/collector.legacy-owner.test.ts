@@ -54,7 +54,7 @@ describe("collectGatewayHealthSnapshot legacy owner projection", () => {
       resolveSessionStorePathCore: () => sessionStorePath,
     }));
     vi.doMock("../../config/sessions/session-accessor.js", () => ({
-      readSessionStoreSummaryReadOnly: () => ({ count: 0, recent: [], byAgent: new Map() }),
+      readSessionStoreSummaryAsync: async () => ({ count: 0, recent: [], byAgent: new Map() }),
     }));
     vi.doMock("../../channels/plugins/read-only.js", () => ({
       listReadOnlyChannelPluginsForConfig: () => healthPluginsForTest,

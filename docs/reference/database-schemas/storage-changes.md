@@ -447,6 +447,35 @@ authority through queue waits and its native commit, so a revoked read cannot
 restore rows after database cleanup. These lifetimes change no schema or
 migration requirement.
 
+Health and status summaries progress independently of the history worker's FIFO.
+Bounded inventories can finish on the already retained parent reader; larger or
+unproven work uses a separate single-worker queue under shared compute admission.
+Each worker task opens and closes its own read-only connection before replying;
+failed replies retire that worker before another summary can start. The parent
+owns cancellation and joins task completion during database cleanup. Existing
+history and writer admission order is unchanged. The local decision and read
+share one synchronous snapshot. Internal ceilings are 32 inventory rows,
+32 configured-agent windows, 128 participant rows, and 64 KiB of projected text.
+Column byte-size probes do not load overflow payloads or parse JSON. Full and
+pending-key canonical scans stay in the worker; an admitted parent's existing
+raw-row parsing behavior is unchanged. Real read failures propagate and never
+select another execution route. Local completion creates no worker and does not
+wait for shared compute capacity. Worker summaries can still wait when that
+capacity is occupied; neither route imposes a new hard health deadline.
+
+Each collection retains one snapshot per physical store and requests per-agent
+windows only for configured agents mapped to that store. Whole-store aggregates
+retain retired namespaces. Store-target preparation and subsequent reads share
+the existing eight-millisecond yield budget. Both routes carry the parent
+reader's actual canonical admission independently of the worker's history-reader
+cache. The parent retains its claim across waits and rechecks physical owner,
+schema and main-key policy at dispatch and return before accepting results or
+recording successful first admission. Health retains its empty-snapshot policy
+for transient SQLite failures; other failures propagate. Summary reads never
+retry through the other execution route. Incognito reads stay in process, and
+reads during an active writer transaction use a committed view. The reader is
+internal to health and status collection.
+
 Correlated conversation replies retain their original store and state environment
 while waiting for write admission. Capture rechecks the live reply claim and
 session lifecycle before recording a replayable reply. Cancellation or a changed

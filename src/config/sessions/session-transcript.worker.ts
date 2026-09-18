@@ -4,6 +4,7 @@ import type {
   readSessionEntryResetRecallCutoff,
 } from "../../../packages/memory-host-sdk/src/host/session-files.js";
 import type { PreparedSessionHistoryReadTarget } from "../../gateway/session-history-read.types.js";
+import type { NativeErrorResponse } from "../../infra/native-error-response-schema.js";
 import { serveWorkerTasks } from "../../infra/worker-task-pool.js";
 import type { SensitiveTextRedactionSnapshot } from "../../logging/redact.js";
 import type { UserTurnTranscriptAdmissionReceipt } from "../../sessions/user-turn-transcript.types.js";
@@ -16,9 +17,14 @@ import type {
   SessionModelContextLimits,
 } from "./session-accessor.sqlite-model-context.js";
 import type {
+  readSessionStoreSummaryInWorker,
+  readSessionStoreSummaryAsync,
+} from "./session-accessor.sqlite-summary.js";
+import type {
   SessionAccessScope,
   SessionTranscriptRuntimeTarget,
 } from "./session-accessor.types.js";
+import type { CanonicalSessionReaderAdmission } from "./session-canonical-key.js";
 import { SessionTranscriptColdError } from "./session-cold-storage-state.js";
 import type {
   SessionHistoryWorkerRequest,
@@ -74,6 +80,18 @@ export type SessionMembersWorkerInput = {
   env: NodeJS.ProcessEnv;
 };
 
+export type SessionStoreSummaryWorkerInput = {
+  kind: "store-summary";
+  database: { agentId: string; path: string };
+  env: NodeJS.ProcessEnv;
+  options: Parameters<typeof readSessionStoreSummaryAsync>[1];
+  admission: CanonicalSessionReaderAdmission;
+};
+
+export type SessionStoreSummaryWorkerResult = {
+  kind: "store-summary";
+} & ReturnType<typeof readSessionStoreSummaryInWorker>;
+
 export type SessionBranchSummaryWorkerInput = {
   kind: "branch-summaries";
   request: SessionBranchSummaryReadRequest;
@@ -84,6 +102,7 @@ type SessionTranscriptWorkerValues = {
   "history-page": SessionHistoryWorkerResult;
   "session-row-presence": boolean;
   "session-members": SessionMember[];
+  "store-summary": SessionStoreSummaryWorkerResult;
   "model-context": ReturnType<typeof readSessionTranscriptModelContext>;
   "session-entry": {
     entry: SessionFileEntry | null;
@@ -102,7 +121,8 @@ export type SessionTranscriptWorkerReply<Kind extends keyof SessionTranscriptWor
       error:
         | { kind: "cold"; sessionId: string }
         | { kind: "projection"; sessionId: string }
-        | { kind: "fence"; message: string };
+        | { kind: "fence"; message: string }
+        | { kind: "store-summary"; details: NativeErrorResponse; transientSqlite: boolean };
     };
 
 // Keep target switching within the existing serialized worker; no read snapshot survives a task.
@@ -162,8 +182,38 @@ serveWorkerTasks(
       | SessionTranscriptHistoryWorkerInput
       | SessionRowPresenceWorkerInput
       | SessionMembersWorkerInput
+      | SessionStoreSummaryWorkerInput
       | SessionBranchSummaryWorkerInput;
     try {
+      if (request.kind === "store-summary") {
+        const { readSessionStoreSummaryInWorker } =
+          await import("./session-accessor.sqlite-summary.js");
+        try {
+          return {
+            ok: true,
+            value: {
+              kind: "store-summary" as const,
+              ...readSessionStoreSummaryInWorker(
+                { ...request.database, env: request.env },
+                request.options,
+                request.admission,
+              ),
+            },
+          };
+        } catch (error) {
+          const { serializeNativeErrorResponse } =
+            await import("../../infra/native-error-response.js");
+          const { isTransientSqliteError } = await import("../../infra/unhandled-rejections.js");
+          return {
+            ok: false,
+            error: {
+              kind: "store-summary",
+              details: serializeNativeErrorResponse(error),
+              transientSqlite: isTransientSqliteError(error),
+            },
+          };
+        }
+      }
       if (request.kind === "branch-summaries") {
         const { readSessionBranchSummariesInWorker } =
           await import("./session-accessor.sqlite-branches.js");

@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { ensureSqliteLibrarySelected } from "../../infra/bun-sqlite-library.js";
+import { restoreNativeErrorResponse } from "../../infra/native-error-response.js";
 import { runtimeProcessEntrypoints } from "../../infra/runtime-process-entrypoints.js";
 import { resolveRuntimeWorkerUrl } from "../../infra/runtime-worker-url.js";
 import { WorkerTaskError, WorkerTaskPool } from "../../infra/worker-task-pool.js";
@@ -24,6 +25,7 @@ import { sessionHistoryCleanupError } from "./session-history-worker-errors.js";
 import { listSessionMembers } from "./session-sharing-store.js";
 import type { SessionMember } from "./session-sharing-store.kernel.js";
 import { resolveSessionStorePathForScope } from "./session-store-path.js";
+import { SessionStoreSummaryReadError } from "./session-store-summary-error.js";
 import { SessionTranscriptProjectionUnavailableError } from "./session-transcript-projection-error.js";
 import {
   resolveSessionTranscriptReadFence,
@@ -35,6 +37,8 @@ import type {
   SessionTranscriptHistoryWorkerInput,
   SessionRowPresenceWorkerInput,
   SessionMembersWorkerInput,
+  SessionStoreSummaryWorkerInput,
+  SessionStoreSummaryWorkerResult,
   SessionModelContextWorkerInput,
   SessionTranscriptWorkerReply,
 } from "./session-transcript.worker.js";
@@ -74,6 +78,27 @@ const branchSummaries = new WorkerTaskPool<
   SessionTranscriptWorkerReply<"branch-summaries">
 >({ workerUrl, maxWorkers: 1, sharedCompute: true });
 
+// Health/status scans must progress independently of foreground history and branch scans.
+const storeSummaries = new WorkerTaskPool<
+  SessionStoreSummaryWorkerInput,
+  SessionTranscriptWorkerReply<"store-summary">
+>({
+  workerUrl,
+  maxWorkers: 1,
+  sharedCompute: true,
+  prepareWorker: () => {
+    ensureSqliteLibrarySelected();
+    return { options: {} };
+  },
+  validateResult: (reply) => {
+    // A failed native close must retire this worker before any successor can execute.
+    const value = unwrapReply<"store-summary">(reply);
+    if (value.kind !== "store-summary") {
+      throw new Error("Session summary worker returned another result instead of a store summary");
+    }
+  },
+});
+
 function unwrapReply<
   Kind extends
     | "model-context"
@@ -81,7 +106,8 @@ function unwrapReply<
     | "history-page"
     | "branch-summaries"
     | "session-row-presence"
-    | "session-members",
+    | "session-members"
+    | "store-summary",
 >(reply: SessionTranscriptWorkerReply<Kind>) {
   if (reply.ok) {
     return reply.value;
@@ -91,6 +117,12 @@ function unwrapReply<
   }
   if (reply.error.kind === "projection") {
     throw new SessionTranscriptProjectionUnavailableError(reply.error.sessionId);
+  }
+  if (reply.error.kind === "store-summary") {
+    throw new SessionStoreSummaryReadError(
+      restoreNativeErrorResponse(reply.error.details),
+      reply.error.transientSqlite,
+    );
   }
   throw new SessionTranscriptReadFenceError(reply.error.message);
 }
@@ -403,6 +435,44 @@ export async function withSessionHistoryWorkerDatabase<T>(
     pruneHistoryDatabases();
     armHistoryIdleRetirement();
   }
+}
+
+export function startSessionStoreSummaryWorkerRead(
+  input: Omit<SessionStoreSummaryWorkerInput, "kind">,
+  assertCurrent: () => void,
+  signal: AbortSignal,
+): {
+  result: Promise<SessionStoreSummaryWorkerResult>;
+  close: () => Promise<void> | undefined;
+} {
+  let dispatched = false;
+  let closed = false;
+  const result = storeSummaries
+    .run(
+      () => {
+        assertCurrent();
+        dispatched = true;
+        return { kind: "store-summary", ...input };
+      },
+      { inputBytes: JSON.stringify(input).length * 2, signal },
+    )
+    .then((reply) => {
+      // Successful worker replies follow native reader closure and result validation.
+      closed = true;
+      return unwrapReply<"store-summary">(reply);
+    });
+  return {
+    result,
+    close: () => {
+      if (closed || !dispatched) {
+        return undefined;
+      }
+      // A rejected task may still own a slot after failed native retirement.
+      return storeSummaries.rotate().then(() => {
+        closed = true;
+      });
+    },
+  };
 }
 
 export async function runSessionBranchSummaryWorkerRequest(

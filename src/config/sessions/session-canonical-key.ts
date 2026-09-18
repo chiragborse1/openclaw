@@ -20,13 +20,21 @@ import {
   parseAgentSessionKey,
 } from "../../routing/session-key.js";
 import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
-import { assertCanonicalSessionValidationSchema } from "../../state/openclaw-agent-canonical-validation-schema.js";
+import {
+  assertCanonicalSessionValidationSchema,
+  hasCurrentCanonicalSessionValidationSchema,
+} from "../../state/openclaw-agent-canonical-validation-schema.js";
 import { CANONICAL_SESSION_VALIDATION_SCHEMA_VERSION } from "../../state/openclaw-agent-db-contract.js";
-import { findOpenClawAgentDatabaseIdentity } from "../../state/openclaw-agent-db-identity.js";
+import {
+  findOpenClawAgentDatabaseIdentity,
+  isOpenClawAgentDatabasePathCurrent,
+  readOpenClawAgentDatabaseIdentity,
+} from "../../state/openclaw-agent-db-identity.js";
 import {
   getOpenClawAgentDatabaseValidation,
   type OpenClawAgentDatabaseValidation,
   hasOpenClawAgentCanonicalValidation,
+  isOpenClawAgentDatabaseValidationCurrent,
   markOpenClawAgentCanonicalValidation,
 } from "../../state/openclaw-agent-db-validation-cache.js";
 import type { DB as OpenClawAgentKyselyDatabase } from "../../state/openclaw-agent-db.generated.js";
@@ -56,6 +64,24 @@ type CanonicalSessionDatabase = Pick<
 const mainKeyReaders = new WeakMap<DatabaseSync, () => { main_key: string } | undefined>();
 
 type ReaderAdmission = { mainKey: string; physicalValidation?: OpenClawAgentDatabaseValidation };
+
+export type CanonicalSessionReaderAdmission = {
+  agentId: string;
+  identity: string;
+  mainKey: string;
+  physicalValidation?: OpenClawAgentDatabaseValidation;
+  readerAdmission?: ReaderAdmission;
+};
+
+export type CanonicalSessionReaderAdmissionResult = {
+  mainKey: string;
+  fullValidation: boolean;
+};
+
+type DelegatedReaderAdmission = {
+  input: CanonicalSessionReaderAdmission;
+  result: CanonicalSessionReaderAdmissionResult;
+};
 const readerAdmissions = resolveGlobalSingleton(
   Symbol.for("openclaw.canonicalSessionReaderAdmissions"),
   () => new WeakMap<DatabaseSync, { proof?: ReaderAdmission }>(),
@@ -120,6 +146,117 @@ function rememberReaderAdmission(database: DatabaseSync, proof: ReaderAdmission)
   } else {
     owned.proof = proof;
   }
+}
+
+/** Borrow the caller's actual reader proof; physical readiness alone is not reader admission. */
+export function prepareCanonicalSessionReaderAdmission(database: {
+  agentId: string;
+  db: DatabaseSync;
+  path: string;
+}) {
+  const { identity } = readOpenClawAgentDatabaseIdentity(database);
+  if (typeof identity !== "string") {
+    throw new Error("Canonical reader handoff requires a persistent database");
+  }
+  // Preserve schema repair guidance before querying the main-key table.
+  hasCanonicalSessionValidationProjection(database);
+  const physicalValidation = getOpenClawAgentDatabaseValidation(database);
+  const mainKey = readCanonicalSessionMainKey(database);
+  const proof = readerAdmissions.get(database.db)?.proof;
+  const input: CanonicalSessionReaderAdmission = {
+    agentId: database.agentId,
+    identity,
+    mainKey,
+    physicalValidation,
+    readerAdmission:
+      proof?.mainKey === mainKey && proof.physicalValidation === physicalValidation
+        ? proof
+        : undefined,
+  };
+  const assertCurrent = () => {
+    if (
+      !isOpenClawAgentDatabasePathCurrent(database) ||
+      readCanonicalSessionMainKey(database) !== mainKey ||
+      getOpenClawAgentDatabaseValidation(database) !== physicalValidation ||
+      (input.readerAdmission !== undefined &&
+        readerAdmissions.get(database.db)?.proof !== input.readerAdmission)
+    ) {
+      throw new Error("Canonical session reader admission is no longer current");
+    }
+  };
+  return {
+    input,
+    assertCurrent,
+    accept: (result: CanonicalSessionReaderAdmissionResult) => {
+      assertCurrent();
+      if (result.mainKey !== mainKey) {
+        throw new Error("Canonical session reader admission policy changed");
+      }
+      if (result.fullValidation) {
+        markOpenClawAgentCanonicalValidation(database);
+      }
+      const current = readerAdmissions.get(database.db)?.proof;
+      if (current?.mainKey !== mainKey || current.physicalValidation !== physicalValidation) {
+        rememberReaderAdmission(database.db, { mainKey, physicalValidation });
+      }
+    },
+  };
+}
+
+/** Validate this request with its caller's admission, without warming or borrowing worker readers. */
+export function assertCanonicalSqliteSessionKeysWithAdmission(
+  database: { agentId: string; db: DatabaseSync; path: string },
+  input: CanonicalSessionReaderAdmission,
+): CanonicalSessionReaderAdmissionResult {
+  return validateCanonicalSessionReaderAdmission(database, input, false);
+}
+
+/** Bounded local reads must not start a full or pending-key validation scan. */
+export function tryAssertCanonicalSqliteSessionKeysWithAdmission(
+  database: { agentId: string; db: DatabaseSync; path: string },
+  input: CanonicalSessionReaderAdmission,
+): CanonicalSessionReaderAdmissionResult | undefined {
+  return validateCanonicalSessionReaderAdmission(database, input, true);
+}
+
+function validateCanonicalSessionReaderAdmission(
+  database: { agentId: string; db: DatabaseSync; path: string },
+  input: CanonicalSessionReaderAdmission,
+  bounded: false,
+): CanonicalSessionReaderAdmissionResult;
+function validateCanonicalSessionReaderAdmission(
+  database: { agentId: string; db: DatabaseSync; path: string },
+  input: CanonicalSessionReaderAdmission,
+  bounded: true,
+): CanonicalSessionReaderAdmissionResult | undefined;
+function validateCanonicalSessionReaderAdmission(
+  database: { agentId: string; db: DatabaseSync; path: string },
+  input: CanonicalSessionReaderAdmission,
+  bounded: boolean,
+): CanonicalSessionReaderAdmissionResult | undefined {
+  const assertCurrent = () => {
+    if (
+      input.agentId !== database.agentId ||
+      input.identity !== readOpenClawAgentDatabaseIdentity(database).identity ||
+      !isOpenClawAgentDatabasePathCurrent(database) ||
+      input.mainKey !== readCanonicalSessionMainKey(database) ||
+      (input.physicalValidation !== undefined &&
+        !isOpenClawAgentDatabaseValidationCurrent(database, input.physicalValidation))
+    ) {
+      throw new Error("Canonical session reader admission is no longer current");
+    }
+  };
+  assertCurrent();
+  const delegated = { input, result: { mainKey: input.mainKey, fullValidation: false } };
+  const validation = validateCanonicalSqliteSessionKeys(
+    database,
+    undefined,
+    false,
+    delegated,
+    bounded,
+  );
+  assertCurrent();
+  return validation.requiresScan ? undefined : delegated.result;
 }
 
 type CanonicalSessionMetadata = {
@@ -322,15 +459,24 @@ function validateCanonicalSqliteSessionKeys(
   database: { agentId: string; db: DatabaseSync; path?: string },
   mainKey?: string,
   collectMetadata = false,
-): { validatedMainKey?: string; metadata?: ValidatedSessionMetadata } {
+  delegated?: DelegatedReaderAdmission,
+  bounded = false,
+): { validatedMainKey?: string; metadata?: ValidatedSessionMetadata; requiresScan?: true } {
+  if (bounded && !hasCurrentCanonicalSessionValidationSchema(database.db)) {
+    return { requiresScan: true };
+  }
   const incremental = hasCanonicalSessionValidationProjection(database);
   const identity = findOpenClawAgentDatabaseIdentity(database);
   const pathname = database.path ?? identity?.filename;
-  const physicalValidation = pathname
-    ? getOpenClawAgentDatabaseValidation({ ...database, path: pathname })
-    : undefined;
+  const physicalValidation = delegated
+    ? delegated.input.physicalValidation
+    : pathname
+      ? getOpenClawAgentDatabaseValidation({ ...database, path: pathname })
+      : undefined;
   const storedMainKey = readCanonicalSessionMainKey(database);
-  const admitted = readerAdmissions.get(database.db)?.proof;
+  const admitted = delegated
+    ? delegated.input.readerAdmission
+    : readerAdmissions.get(database.db)?.proof;
   // Preserve admitted-reader parsing for raw metadata edits; new handles and
   // policy/owner changes must cross canonical admission again. Rows are never cached here.
   if (admitted?.mainKey === storedMainKey && admitted.physicalValidation === physicalValidation) {
@@ -343,26 +489,51 @@ function validateCanonicalSqliteSessionKeys(
     );
     throw readScope.snapshotRequired;
   }
-  const remember = () =>
-    rememberReaderAdmission(database.db, { mainKey: storedMainKey, physicalValidation });
+  const remember = () => {
+    if (!delegated) {
+      rememberReaderAdmission(database.db, { mainKey: storedMainKey, physicalValidation });
+    }
+  };
   if (incremental) {
     const inMemory = typeof identity?.identity === "symbol";
-    if (!inMemory && !hasOpenClawAgentCanonicalValidation(database)) {
+    const canonicalReady = delegated
+      ? physicalValidation !== undefined &&
+        Atomics.load(new Int32Array(physicalValidation.canonicalReady), 0) === 1
+      : hasOpenClawAgentCanonicalValidation(database);
+    if (!inMemory && !canonicalReady) {
+      if (bounded) {
+        return { requiresScan: true };
+      }
       // A copied clean projection is not first-admission proof for an unknown file.
       deferCanonicalSessionValidation(database);
       const metadata: ValidatedSessionMetadata | undefined = collectMetadata
         ? { dataVersion: readSqliteDataVersion(database.db), entries: new Map(), keys: [] }
         : undefined;
       scanCanonicalSqliteSessionEntries(database, undefined, mainKey, metadata);
-      markOpenClawAgentCanonicalValidation(database);
+      if (delegated) {
+        delegated.result.fullValidation = true;
+      } else {
+        markOpenClawAgentCanonicalValidation(database);
+      }
       remember();
       return { metadata };
     }
     const db = getNodeSqliteKysely<CanonicalSessionDatabase>(database.db);
     const pending = db.selectFrom("session_canonical_validation_pending").select("session_key");
-    if (!executeSqliteQueryTakeFirstSync(database.db, pending.limit(1))) {
+    if (
+      !executeSqliteQueryTakeFirstSync(
+        database.db,
+        pending
+          .clearSelect()
+          .select((eb) => eb.val(1).as("present"))
+          .limit(1),
+      )
+    ) {
       remember();
       return {};
+    }
+    if (bounded) {
+      return { requiresScan: true };
     }
     deferCanonicalSessionValidation(database);
     if (collectMetadata) {
@@ -391,6 +562,9 @@ function validateCanonicalSqliteSessionKeys(
     }
     remember();
     return {};
+  }
+  if (bounded) {
+    return { requiresScan: true };
   }
   const metadata: ValidatedSessionMetadata | undefined = collectMetadata
     ? { dataVersion: readSqliteDataVersion(database.db), entries: new Map(), keys: [] }
