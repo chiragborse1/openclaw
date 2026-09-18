@@ -154,12 +154,22 @@ observation; the Gateway then logged `ready` at 947.5 seconds. Stopping that
 instance eventually required systemd's existing 5-minute-30-second stop limit.
 These are measurements of one synthetic fixture, not expected startup budgets.
 
-A separate failed-update reproduction retained the original package and PID but
-lost HTTP responsiveness for at least 25 minutes after the failure. Its cause
-remains unresolved: the plain-start control did not reproduce the same
-ready-to-unresponsive transition, and the failed run lacked live-state
-before/after evidence. A retained package, PID, or `serviceRestartSafe: true`
-does not establish that the previous Gateway is serving.
+A second, uninstrumented 480-agent control first passed signed Gateway
+handshake, serving-build, and health-RPC checks, then lost HTTP responsiveness
+without any update. The 25-minute post-readiness control completed; sampled
+failures spanned 24 minutes before a final three-minute serving check also
+failed. The original PID and installation remained. Shared schema 17, all 481
+physical agent databases at schema 19, and config bytes stayed unchanged;
+captured state-maintenance leases were empty.
+
+The main thread consumed nearly one CPU core. Logs showed existing scheduled
+review attempts, fleet-wide integrity checks, and memory-plugin startup cleanup
+errors. This reproduces a published Gateway fleet preparation/background
+maintenance availability problem independently of updating. Its exact JavaScript
+hot loop remains unprofiled, and the original failed-update run lacked the
+live-state evidence needed to exclude an additional state or recovery defect.
+A retained package, PID, or `serviceRestartSafe: true` does not establish that
+the previous Gateway is serving.
 See [the investigation](https://github.com/openclaw/openclaw/issues/151295).
 
 Before recovery, preserve the update report and a
