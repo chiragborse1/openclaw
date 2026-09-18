@@ -62,9 +62,8 @@ it("measures 100 composed catalog lists against real session and plugin stores",
     { layout: "state-only", prefix: "composed-catalog-" },
     async (state) => {
       const counters = createCatalogIoCounters();
-      // Match request ownership so optional transcript backfill stays outside the measurement.
-      const releaseForegroundWork = retainSessionListForegroundWork();
       let fixture: Awaited<ReturnType<typeof createComposedCatalogFixture>> | undefined;
+      let releaseForeground: (() => void) | undefined;
       try {
         counters.begin();
         fixture = await createComposedCatalogFixture(state, counters);
@@ -134,6 +133,8 @@ it("measures 100 composed catalog lists against real session and plugin stores",
           await fixture.projection.ensureMaterialized();
         } while (fixture.projection.needsMaterialization);
         const cpuReferenceP50Ms = measureHostCpuReference();
+        // Keep optional transcript backfill out of the measured foreground work.
+        releaseForeground = retainSessionListForegroundWork();
         counters.begin();
         const durations: number[] = [];
         const workPerList = [];
@@ -204,7 +205,7 @@ it("measures 100 composed catalog lists against real session and plugin stores",
               Object.entries(io).map(([key, value]) => [key, value / 100]),
             ),
             scope:
-              "Explicit local Codex host through the real Gateway handler, registered provider, session accessor and plugin stores. Main-thread SQL counts include freshness and binding authority reads; worker read operations are reported separately. File counts cover sync, callback and promise fs read/open APIs.",
+              "Explicit local Codex host through Gateway request admission, registered provider, session accessor and plugin stores. Main-thread SQL counts include freshness and binding authority reads; worker read operations are reported separately. File counts cover sync, callback and promise fs read/open APIs.",
           }),
         );
         expect(cpuSamples.totalCpuSamples).toBeGreaterThan(0);
@@ -216,7 +217,7 @@ it("measures 100 composed catalog lists against real session and plugin stores",
         expect(io.pluginStateWorkerReadOperations).toBe(0);
         expect(io.sessionEntryReads).toBe(0);
         expect(io.sessionPayloadReads).toBe(0);
-        // Revalidate all three adopted bindings without adding work to the resident list path.
+        // Each adopted binding needs six reads for freshness, schema admission, and authority.
         for (const work of workPerList) {
           expect(work).toEqual({
             sqliteReadCalls: 18,
@@ -230,10 +231,10 @@ it("measures 100 composed catalog lists against real session and plugin stores",
         // composition CPU growth leaves exact SQL budgets green.
         expect(durations[49]).toBeLessThan(cpuReferenceP50Ms * 20);
       } finally {
+        releaseForeground?.();
         try {
           await fixture?.close();
         } finally {
-          releaseForegroundWork();
           counters.close();
         }
       }

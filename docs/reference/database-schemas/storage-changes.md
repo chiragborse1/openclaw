@@ -181,6 +181,17 @@ Reads use the existing-only worker path and do not create a missing database.
 Public event helpers and exports await durable completion. Cursor eviction,
 namespace-wide append ordering, sibling row budgets, and rollback remain unchanged.
 
+Matrix's live sync cache loads and persists through the shared-state worker. The
+client factory awaits the loaded cursor and clean-shutdown facts before publishing
+the client, so startup's replay decision sees the previous completed shutdown.
+The SDK's synchronous cursor getter stays memory-only. Complete cache reads, writes,
+and deletion serialize by storage root within the process. Chunk writes still publish
+metadata before deleting the previous generation; deletion, flush, and quiescence
+join the same persistence owner. Cache-load failures remain visible on persistence,
+and the existing version, namespaces, digest validation, debounce, and host floor
+are unchanged. Account credentials, storage-root selection and initial metadata
+writes retain their separate owners.
+
 Reef registration binding reads, reservations, finalization, release, and setup-session
 persistence use the shared-state worker. Reservation mutations compare the current
 row before writing; a conflict rereads ownership before retrying. The CLI, setup
@@ -309,6 +320,18 @@ Classified database errors survive transport, and canonical close joins worker
 operations and native cleanup. Cold registry restoration and runtime-configuration
 preparation still retain their existing main-thread behavior.
 
+Dynamic model resolution awaits persisted auth-profile reads. Agent-local and
+legacy shared credentials use the isolated read-only child, so reads can coexist
+with the agent database's memory publication worker. Captured source-exclusion
+scopes read through their owned private snapshot. Relocated shared credentials
+and selected personal accounts use the canonical shared-state worker. Missing
+stores remain missing. Bounded transfer frames preserve complete credential
+rows without an aggregate size limit. Reader cleanup settles before the result
+reaches model preparation; host-owned overlays and migration checks retain
+captured persisted facts and revalidate after cleanup. A recorded refusal on an unreadable inherited agent store
+does not hide healthy local credentials; selected-store failures still propagate.
+Credential mutations and synchronous SDK readers retain their existing owners.
+
 Model-context reads and session transcript preparation use the session-transcript
 worker with separate bounded queues. Background preparation cannot occupy the
 foreground context queue. Session exports read events, statistics, and session
@@ -394,6 +417,19 @@ replacement or switch readers. Direct servers and standalone config readers keep
 their existing execution path unless their host explicitly supplies this operation.
 Missing-file defaults still load plugin metadata only when those defaults need it.
 The operation changes no schema, persisted representation, or publication authority.
+
+Meeting transcript identity, descriptor, notes, summary, and utterance reads use
+the shared-state worker. Typed commands call the existing synchronous query
+kernels, preserve complete stored results and library error fields, and retain
+first-use schema creation. Compound enumeration, matching, and library reads
+use one deferred read snapshot, keeping their queries coherent while capture
+writes still run on the parent connection. Schema creation finishes before the
+read transaction, and domain errors are translated after it settles. Canonical
+close drains these reads before closing their worker connection. Chronological
+list reads still use the parent process because their SQL date function observes
+its current timezone. Streamed reads, export snapshots, and capture writes retain
+their existing owners until their snapshot and write-drainage lifecycles move
+together.
 
 SQLite worker transport preserves complete result values. Results within the
 64 MiB inline reply budget keep their existing reply path; larger results are
