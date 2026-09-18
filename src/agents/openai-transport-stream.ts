@@ -2370,7 +2370,7 @@ export function buildOpenAIResponsesParams(
     ...resolveOpenAIResponsesCacheParams(
       model,
       cacheRetention,
-      compat.supportsLongCacheRetention !== false,
+      compat.supportsLongCacheRetention ?? true,
     ),
     ...(isCodexResponses
       ? { instructions: resolveOpenAICodexResponsesInstructions(model, context) }

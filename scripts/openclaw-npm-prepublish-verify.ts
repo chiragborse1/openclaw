@@ -105,7 +105,6 @@ function main(argv = process.argv.slice(2)): void {
   const prefixDir = join(workingDir, "prefix");
   try {
     let binaryInvocation: NpmVerifyCommandInvocation;
-    let gatewayStatusInvocation: NpmVerifyCommandInvocation | undefined;
     let packageRoot: string;
     if (usesPreparedLocalDependencyInstall(args.dependencyTarballPaths.length)) {
       const aiTarballPath = realpathSync(args.dependencyTarballPaths[0]);
@@ -163,12 +162,6 @@ function main(argv = process.argv.slice(2)): void {
       const globalRoot = npmExec(["root", "-g", "--prefix", prefixDir], workingDir);
       packageRoot = join(globalRoot, "openclaw");
       binaryInvocation = resolveInstalledBinaryCommandInvocation(prefixDir, ["--version"]);
-      if (verifiesPublicRegistryGatewayStatus(args.dependencyTarballPaths.length)) {
-        gatewayStatusInvocation = resolveInstalledBinaryCommandInvocation(prefixDir, [
-          "gateway",
-          "status",
-        ]);
-      }
     }
     const pkg = JSON.parse(
       readFileSync(join(packageRoot, "package.json"), "utf8"),
@@ -186,8 +179,11 @@ function main(argv = process.argv.slice(2)): void {
       );
     }
     if (errors.length === 0) {
-      if (gatewayStatusInvocation) {
-        runNpmVerifyCommand(gatewayStatusInvocation, workingDir);
+      if (verifiesPublicRegistryGatewayStatus(args.dependencyTarballPaths.length)) {
+        runNpmVerifyCommand(
+          resolveInstalledBinaryCommandInvocation(prefixDir, ["gateway", "status"]),
+          workingDir,
+        );
       }
       runInstalledWorkspaceBootstrapSmoke({ packageRoot });
     }
