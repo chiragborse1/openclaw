@@ -47,6 +47,17 @@ export const formatDirectiveAck = (text: string): string => {
   return prefixSystemMessage(text);
 };
 
+export function buildDirectiveAcknowledgement(
+  parts: readonly string[],
+  hasStatusDirective: boolean,
+): ReplyPayload | undefined {
+  const ack = parts.join(" ").trim();
+  if (!ack && hasStatusDirective) {
+    return undefined;
+  }
+  return { text: ack || "OK." };
+}
+
 const formatOptionsLine = (options: string) => `Options: ${options}.`;
 export const withOptions = (line: string, options: string) =>
   `${line}\n${formatOptionsLine(options)}`;

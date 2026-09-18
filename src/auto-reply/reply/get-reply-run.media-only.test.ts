@@ -5525,7 +5525,7 @@ describe("runPreparedReply media-only handling", () => {
       "Beta hook finished",
       withSystemEventOwner({ sessionKey: "global" }, "beta"),
     );
-    enqueueSystemEvent("Legacy unowned event", { sessionKey: "global" });
+    enqueueSystemEvent("Alpha follow-up", withSystemEventOwner({ sessionKey: "global" }, "alpha"));
 
     await runPreparedReply(
       baseParams({
@@ -5533,7 +5533,7 @@ describe("runPreparedReply media-only handling", () => {
         sessionKey: "global",
         opts: withReplySystemEventContext(
           { isHeartbeat: true },
-          { sessionKey: "global", events: peekSystemEventEntries("global") },
+          { sessionKey: "global", events: peekSystemEventEntries("agent:alpha:global") },
         ),
       }),
     );
@@ -5541,7 +5541,7 @@ describe("runPreparedReply media-only handling", () => {
     const call = requireRunReplyAgentCall();
     const context = call.followupRun.currentInboundContext;
     expect(call.followupRun.prompt).toBe("[User sent media without caption]");
-    for (const event of ["Alpha hook finished", "Legacy unowned event"]) {
+    for (const event of ["Alpha hook finished", "Alpha follow-up"]) {
       expect(context?.text).toContain(event);
       expect(context?.fragments).toContainEqual({
         kind: "conversation-data",
@@ -5552,7 +5552,7 @@ describe("runPreparedReply media-only handling", () => {
     expect(call.followupRun.prompt).not.toContain("Beta hook finished");
     expect(context?.text).not.toContain("Beta hook finished");
     expect(JSON.stringify(context?.fragments)).not.toContain("Beta hook finished");
-    expect(peekSystemEventEntries("global").map((event) => event.text)).toEqual([
+    expect(peekSystemEventEntries("agent:beta:global").map((event) => event.text)).toEqual([
       "Beta hook finished",
     ]);
   });

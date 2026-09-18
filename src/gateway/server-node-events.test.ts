@@ -543,7 +543,7 @@ describe("node exec events", () => {
     expect(enqueueSystemEventMock).toHaveBeenCalledWith(
       "Exec finished (node=node-2 id=run-finished, code 0)\ndone",
       {
-        sessionKey: "node-node-2",
+        sessionKey: "agent:main:node-node-2",
         contextKey: "exec:run-finished",
       },
     );

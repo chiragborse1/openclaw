@@ -12,6 +12,7 @@ import { persistStickyModelSelectionBestEffort } from "../../agents/sticky-model
 import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
 import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
 import { triggerSessionPatchHook } from "../../gateway/session-patch-hooks.js";
+import { resolveSystemEventQueueKey } from "../../infra/system-event-ownership.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
 import { applyModelOverrideWithAuthProfileCompatibility } from "../../sessions/auth-profile-preservation.js";
 import {
@@ -38,6 +39,7 @@ import { maybeHandleQueueDirective } from "./directive-handling.queue-validation
 import {
   acknowledgeIgnoredSessionDirective,
   applySessionDirectiveFields,
+  buildDirectiveAcknowledgement,
   canPersistSessionDirectiveDefaults,
   DIRECTIVE_ACK_MESSAGES,
   type IgnoredSessionDirectiveFlag,
@@ -571,7 +573,7 @@ export async function handleDirectiveOnly(
     const nextLabel = `${modelSelection.provider}/${modelSelection.model}`;
     if (nextLabel !== params.initialModelLabel) {
       enqueueSystemEvent(formatModelSwitchEvent(nextLabel, modelSelection.alias), {
-        sessionKey,
+        sessionKey: resolveSystemEventQueueKey(sessionKey, activeAgentId),
         contextKey: `model:${nextLabel}`,
       });
     }
@@ -580,7 +582,7 @@ export async function handleDirectiveOnly(
     enqueueModeSwitchEvents({
       enqueueSystemEvent,
       sessionEntry,
-      sessionKey,
+      sessionKey: resolveSystemEventQueueKey(sessionKey, activeAgentId),
       elevatedChanged,
       reasoningChanged,
     });
@@ -708,13 +710,9 @@ export async function handleDirectiveOnly(
         ? "Fast mode set to auto."
         : `Fast mode ${nextFastMode ? "enabled" : "disabled"}.`;
     enqueueSystemEvent(nextFastModeText, {
-      sessionKey,
+      sessionKey: resolveSystemEventQueueKey(sessionKey, activeAgentId),
       contextKey: `fast:${formatFastModeValue(nextFastMode)}`,
     });
   }
-  const ack = parts.join(" ").trim();
-  if (!ack && directives.hasStatusDirective) {
-    return undefined;
-  }
-  return { text: ack || "OK." };
+  return buildDirectiveAcknowledgement(parts, directives.hasStatusDirective);
 }

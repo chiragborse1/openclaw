@@ -1080,9 +1080,6 @@ export const handleNodeEvent = async (
         return undefined;
       }
       const sessionKeyRaw = normalizeOptionalString(obj.sessionKey) ?? `node-${nodeId}`;
-      if (!sessionKeyRaw) {
-        return undefined;
-      }
       const { canonicalKey: sessionKey } = loadSessionEntry(sessionKeyRaw);
 
       const cfg = getRuntimeConfig();
@@ -1123,10 +1120,6 @@ export const handleNodeEvent = async (
           : undefined;
       const timedOut = obj.timedOut === true;
       const output = normalizeOptionalString(obj.output) ?? "";
-      // Strip parens from the raw reason: the `Exec denied (node=..., <reason>): cmd`
-      // wire format is parsed by matching the first balanced `(...)`, and stray
-      // parens in user-supplied input would break the metadata/body boundary.
-      const reason = (normalizeOptionalString(obj.reason) ?? "").replace(/[()]/g, "");
 
       let text;
       if (evt.event === "exec.started") {
@@ -1134,7 +1127,7 @@ export const handleNodeEvent = async (
         if (command) {
           text += `: ${command}`;
         }
-      } else if (evt.event === "exec.finished") {
+      } else {
         const exitLabel = timedOut ? "timeout" : `code ${exitCode ?? "?"}`;
         const compactOutput = compactNodeEventText(output, MAX_EXEC_EVENT_OUTPUT_CHARS);
         const shouldNotify = timedOut || exitCode !== 0 || compactOutput.length > 0;
@@ -1155,18 +1148,19 @@ export const handleNodeEvent = async (
         if (compactOutput) {
           text += `\n${compactOutput}`;
         }
-      } else {
-        text = `Exec denied (node=${nodeId}${runId ? ` id=${runId}` : ""}${reason ? `, ${reason}` : ""})`;
-        if (command) {
-          text += `: ${command}`;
-        }
       }
 
       const eventRouting = resolveEventSessionRoutingPolicy({ cfg, sessionKey });
-      const queued = enqueueSystemEvent(text, {
-        sessionKey: resolveEventSessionKeyForPolicy(sessionKey, eventRouting),
-        contextKey: runId ? `exec:${runId}` : "exec",
-      });
+      const queued = enqueueSystemEvent(
+        text,
+        withSystemEventOwner(
+          {
+            sessionKey: resolveEventSessionKeyForPolicy(sessionKey, eventRouting),
+            contextKey: runId ? `exec:${runId}` : "exec",
+          },
+          resolveSessionAgentId({ sessionKey, config: cfg }),
+        ),
+      );
       if (queued) {
         // Scope wakes only for canonical agent sessions. Synthetic node-* fallback
         // keys should keep legacy unscoped behavior so enabled non-main heartbeat

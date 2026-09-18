@@ -19,7 +19,6 @@ import {
 } from "../infra/heartbeat-wake.js";
 import { executeSqliteQueryTakeFirstSync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
 import type { SessionBindingRecord } from "../infra/outbound/session-binding-service.js";
-import { selectAgentSystemEvents } from "../infra/system-event-ownership.js";
 import {
   peekSystemEventEntries,
   peekSystemEvents,
@@ -483,10 +482,9 @@ describe("task-registry", () => {
           });
           await maybeDeliverTaskTerminalUpdate(task.taskId);
         }
-        const events = peekSystemEventEntries("global");
+        const events = peekSystemEventEntries("agent:alpha:global");
         expect(events).toHaveLength(kind === "blocked" ? 2 : 1);
-        expect(selectAgentSystemEvents(events, "alpha")).toEqual(events);
-        expect(selectAgentSystemEvents(events, "beta")).toEqual([]);
+        expect(peekSystemEventEntries("agent:beta:global")).toEqual([]);
         await flushHeartbeatWakeRequests();
         const taskWakes = heartbeatWakeRequests.filter((request) =>
           request.source.startsWith("background-task"),

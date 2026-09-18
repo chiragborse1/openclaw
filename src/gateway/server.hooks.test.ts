@@ -542,8 +542,8 @@ describe("gateway server hooks", () => {
     testState.sessionConfig = { scope: "global" };
     await withGatewayServer(async ({ port }) => {
       expect((await postHook(port, "/hooks/mapped-wake", { subject: "Global" })).status).toBe(200);
-      await waitForSystemEventTexts("global");
-      expect(peekSystemEvents("global")).toContain("Mapped wake: Global");
+      await waitForSystemEventTexts("agent:hooks:global");
+      expect(peekSystemEvents("agent:hooks:global")).toContain("Mapped wake: Global");
     });
   });
 
