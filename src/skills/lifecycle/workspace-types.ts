@@ -1,5 +1,5 @@
 /** File-host lifecycle contracts shared by local operations and remote workspace adapters. */
-import type { ArchiveLogger } from "@openclaw/fs-safe/archive";
+import type { ArchiveLogger } from "../../infra/archive.js";
 import type { ClawHubDownloadResult } from "../../infra/clawhub-artifacts.js";
 import type {
   ClawHubSkillVerificationResponse,
