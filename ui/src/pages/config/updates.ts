@@ -7,12 +7,19 @@ import {
   isAcknowledgedAbandonedUpdateRun,
   type UpdateRunRecord,
 } from "../../../../src/infra/update-run-record.ts";
+import {
+  classifyUpdateOutcome,
+  isReportableUpdateRun,
+} from "../../../../src/shared/update-outcome.ts";
 import "../../components/update-run-view.ts";
 import type { UpdateAvailable, UpdateScheduleState } from "../../api/types.ts";
 import { deviceSettingsGroupLabelKey } from "../../app-navigation.ts";
 import type { NativeDeviceSettingsCapability } from "../../app/native-device-settings.ts";
 import type { UpdateFailureReportNotice } from "../../app/overlays-types.ts";
-import type { ApplicationStatusBanner } from "../../app/update-overlay-helpers.ts";
+import type {
+  ApplicationStatusBanner,
+  RecordedUpdateAttempt,
+} from "../../app/update-overlay-helpers.ts";
 import {
   formatUpdateCampaignLabel,
   formatUpdateTargetLabel,
@@ -49,6 +56,7 @@ type UpdatesViewProps = {
   updateAvailable: UpdateAvailable | null;
   statusBanner: ApplicationStatusBanner | null;
   statusCheckBanner: ApplicationStatusBanner | null;
+  recordedUpdateAttempt: RecordedUpdateAttempt | null;
   run: UpdateRunRecord | null;
   connected: boolean;
   configBusy: boolean;
@@ -116,9 +124,8 @@ function renderRecordedAttempt(props: UpdatesViewProps) {
     return nothing;
   }
   const failed = run
-    ? !isAcknowledgedAbandonedUpdateRun(run) &&
-      (run.status === "failed" || run.status === "rolled-back" || run.status === "skipped")
-    : true;
+    ? !isAcknowledgedAbandonedUpdateRun(run) && isReportableUpdateRun(run)
+    : !props.recordedUpdateAttempt || classifyUpdateOutcome(props.recordedUpdateAttempt) !== "noop";
   const canRetry = props.canUpdate && !props.updateBusy && !props.statusChecking;
   return renderSettingsSection({ title: t("updates.page.latestAttempt") }, [
     run

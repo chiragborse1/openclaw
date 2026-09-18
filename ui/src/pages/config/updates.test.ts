@@ -3,6 +3,7 @@
 import { render } from "lit";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NativeDeviceSettingsCapability } from "../../app/native-device-settings.ts";
+import { projectUpdateSentinel } from "../../app/update-overlay-helpers.ts";
 import { i18n } from "../../i18n/index.ts";
 import {
   createIosNativeDeviceSettingsSnapshot,
@@ -36,6 +37,7 @@ function createProps(overrides: Partial<UpdatesViewProps> = {}): UpdatesViewProp
     },
     statusBanner: null,
     statusCheckBanner: null,
+    recordedUpdateAttempt: null,
     run: null,
     connected: true,
     configBusy: false,
@@ -792,16 +794,26 @@ describe("renderUpdates", () => {
       "Update error: build-failed. Fix the build error and retry.",
     );
     expect(row("Status").querySelector(".settings-status--danger")).not.toBeNull();
+    expect(row("Recovery").textContent).toContain("Retry update");
+    expect(row("CLI fallback").textContent).toContain("openclaw triage");
   });
 
   it.each([
-    { status: "succeeded", reconciled: false },
-    { status: "failed", reconciled: false },
-    { status: "skipped", reconciled: false },
-    { status: "failed", reconciled: true },
+    { status: "succeeded", reason: null, recovery: false, reconciled: false },
+    { status: "failed", reason: "build-failed", recovery: true, reconciled: false },
+    { status: "skipped", reason: "dirty", recovery: true, reconciled: false },
+    {
+      status: "skipped",
+      reason: "external-supervisor-update-required",
+      recovery: false,
+      reconciled: false,
+    },
+    { status: "skipped", reason: "container-image-install", recovery: false, reconciled: false },
+    { status: "skipped", reason: "already-current", recovery: false, reconciled: false },
+    { status: "failed", reason: "abandoned", recovery: false, reconciled: true },
   ] as const)(
-    "renders the durable $status report with reconciled=$reconciled and only offers current recovery",
-    async ({ status, reconciled }) => {
+    "renders the durable $status/$reason report with reconciled=$reconciled and only offers current recovery",
+    async ({ status, reason, recovery, reconciled }) => {
       const onUpdateNow = vi.fn();
       const onCheckStatus = vi.fn(async () => true);
       render(
@@ -811,7 +823,7 @@ describe("renderUpdates", () => {
               phase: "finished",
               status,
               finishedAtMs: 10,
-              reason: reconciled ? "abandoned" : status === "failed" ? "build-failed" : null,
+              reason,
               after: { version: "2026.9.2" },
               steps: [
                 {
@@ -843,10 +855,10 @@ describe("renderUpdates", () => {
               ? "OpenClaw updated to 2026.9.2"
               : `OpenClaw update ${status}`,
         );
-        if (status !== "succeeded" && !reconciled) {
-          const recovery = row("Recovery");
-          recovery.querySelector<HTMLButtonElement>("button")?.click();
-          recovery.querySelectorAll<HTMLButtonElement>("button")[1]?.click();
+        if (recovery) {
+          const actions = row("Recovery");
+          actions.querySelector<HTMLButtonElement>("button")?.click();
+          actions.querySelectorAll<HTMLButtonElement>("button")[1]?.click();
           expect(onCheckStatus).toHaveBeenCalledOnce();
           expect(onUpdateNow).toHaveBeenCalledOnce();
           expect(row("CLI fallback").querySelector("code")?.textContent).toBe("openclaw triage");
@@ -866,6 +878,36 @@ describe("renderUpdates", () => {
       } finally {
         container.remove();
       }
+    },
+  );
+
+  it.each([
+    { reason: "external-supervisor-update-required", recovery: false },
+    { reason: "already-current", recovery: false },
+    { reason: "dirty", recovery: true },
+  ])(
+    "keeps the retained $reason sentinel outcome without false recovery",
+    ({ reason, recovery }) => {
+      const projected = projectUpdateSentinel({
+        kind: "update",
+        status: "skipped",
+        ts: 10,
+        stats: { reason },
+      })!;
+      render(
+        renderUpdates(
+          createProps({
+            statusBanner: projected.banner,
+            recordedUpdateAttempt: projected.attempt,
+          }),
+        ),
+        container,
+      );
+
+      expect(row("Status").textContent).toContain(reason);
+      expect(container.textContent?.includes("Retry update")).toBe(recovery);
+      expect(container.textContent?.includes("CLI fallback")).toBe(recovery);
+      expect(container.textContent?.includes("openclaw triage")).toBe(recovery);
     },
   );
 

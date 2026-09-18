@@ -1003,6 +1003,7 @@ export class ConfigPage extends OpenClawLightDomElement {
         updateAvailable: overlaySnapshot.updateAvailable,
         statusBanner: overlaySnapshot.updateStatusBanner,
         statusCheckBanner: overlaySnapshot.updateStatusCheckBanner,
+        recordedUpdateAttempt: overlaySnapshot.recordedUpdateAttempt,
         reportableUpdateFailureId: overlaySnapshot.reportableUpdateFailureId,
         updateFailureReportBusy: overlaySnapshot.updateFailureReportBusy,
         updateFailureReportNotice: overlaySnapshot.updateFailureReportNotice,
