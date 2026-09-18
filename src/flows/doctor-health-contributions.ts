@@ -514,12 +514,15 @@ async function runDoctorHealthContributionList(
     }
   } finally {
     const findings = [...(ctx.updateBudget?.deferred.values() ?? [])];
-    recordDoctorHealthWarnings(ctx, findings);
+    // Preserve the deferred set before the existing bounded advisory digest.
+    recordDoctorHealthWarnings(ctx, findings, [], { prepend: true });
     for (const finding of findings) {
       ctx.runtime.log(`[warning] ${finding.checkId} [${finding.errorCode}]: ${finding.message}`);
     }
     if (findings.length > 0) {
-      ctx.runtime.log("Run `openclaw doctor` after activation to complete deferred inspections.");
+      ctx.runtime.log(
+        "Run `openclaw doctor --fix` after activation to complete deferred checks and repairs.",
+      );
     }
   }
 }

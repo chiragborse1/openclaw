@@ -104,7 +104,8 @@ export function admitDoctorUpdateInspection(
       errorCode: "update-inspection-deferred",
       requirement: "update-validation-budget",
       message: `${check.label} deferred until after activation: ${budget.agentCount} agent scopes need a ${allowance}ms inspection allowance, with ${Math.max(0, budget.inspectionDeadlineMs - Date.now())}ms remaining in the ${budget.phase} inspection window (${budget.source}).`,
-      fixHint: "Run `openclaw doctor` after activation to complete deferred inspections.",
+      fixHint:
+        "Run `openclaw doctor --fix` after activation to complete deferred checks and repairs.",
     });
   }
   return false;

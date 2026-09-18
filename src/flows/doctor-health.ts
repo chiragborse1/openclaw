@@ -346,9 +346,13 @@ async function runDoctorHealthFlowWithResult(
         for (const change of updateResult.capture.configChanges) {
           createSubsystemLogger("update").warn(formatUpdateDoctorConfigChange(change));
         }
+        const contributionWarnings = healthContext?.updateWarnings ?? [];
+        const deferredCount = healthContext?.updateBudget?.deferred.size ?? 0;
+        // Contributions put deferrals first; retain migration advisories before other diagnostics.
         const warnings = normalizeUpdatePostInstallDoctorWarnings([
+          ...contributionWarnings.slice(0, deferredCount),
           ...(doctorResult.warnings ?? []),
-          ...(healthContext?.updateWarnings ?? []),
+          ...contributionWarnings.slice(deferredCount),
         ]);
         await writeUpdatePostInstallDoctorResult({
           resultPath: updateResult.resultPath,

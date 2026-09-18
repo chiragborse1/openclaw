@@ -90,7 +90,7 @@ appears as an `update-inspection-deferred` warning in Doctor output and the
 update outcome, with the reason and remaining inspection allowance. A deferred
 check did not pass or fail; it was not run.
 
-Run `openclaw doctor` after activation to complete those checks and review any
+Run `openclaw doctor --fix` after activation to complete those checks and review
 optional repairs. An ordinary Doctor run does not retain the update's inspection
 limit. Required session, database, workspace-state, and exec-approval readiness
 checks still run during the update. Project-clone inspection, SQLite database-size

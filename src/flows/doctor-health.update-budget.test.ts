@@ -81,8 +81,13 @@ it.each([
       ]);
       const selected = resolveDoctorHealthContributions().filter((entry) => ids.has(entry.id));
       expect(selected).toHaveLength(ids.size);
+      const priorWarnings = Array.from(
+        { length: agentCount === 480 ? 32 : 0 },
+        (_, index) => `Prior Doctor warning ${index}`,
+      );
       const ctx = createDoctorHealthFlowContext({
         cfg,
+        updateWarnings: priorWarnings,
         env,
         preparedAgentCount: agentCount,
         options: { repair: true, nonInteractive: true },
@@ -99,7 +104,11 @@ it.each([
       if (agentCount === 3) {
         expect(ctx.updateWarnings ?? []).toEqual([]);
       } else {
-        expect(ctx.updateWarnings).toEqual([expect.stringContaining("core/doctor/auth-profiles")]);
+        expect(ctx.updateWarnings).toHaveLength(32);
+        expect(ctx.updateWarnings).toContain("Prior Doctor warning 0");
+        expect(ctx.updateWarnings).toContainEqual(
+          expect.stringContaining("core/doctor/auth-profiles [update-inspection-deferred]"),
+        );
         expect([...(ctx.updateBudget?.deferred.values() ?? [])]).toEqual([
           expect.objectContaining({
             checkId: "core/doctor/auth-profiles",

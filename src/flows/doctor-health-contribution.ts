@@ -137,9 +137,10 @@ export function recordDoctorHealthWarnings(
   ctx: DoctorHealthFlowContext,
   findings: readonly HealthFinding[],
   warnings: readonly string[] = [],
+  options?: { prepend?: boolean },
 ): void {
-  ctx.updateWarnings = normalizeUpdatePostInstallDoctorWarnings([
-    ...(ctx.updateWarnings ?? []),
+  const existing = ctx.updateWarnings ?? [];
+  const added = [
     ...findings
       .filter((finding) => finding.severity === "warning")
       .map(
@@ -147,7 +148,10 @@ export function recordDoctorHealthWarnings(
           `${finding.checkId}${finding.errorCode ? ` [${finding.errorCode}]` : ""}: ${finding.message}`,
       ),
     ...warnings,
-  ]);
+  ];
+  ctx.updateWarnings = normalizeUpdatePostInstallDoctorWarnings(
+    options?.prepend ? [...added, ...existing] : [...existing, ...added],
+  );
 }
 
 export function renderStructuredHealthFindings(
