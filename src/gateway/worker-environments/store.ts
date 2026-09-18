@@ -484,6 +484,7 @@ function environmentRows(db: DatabaseSync) {
     );
 }
 function recordsFromRows(rows: readonly RowWithFallbackPorts[]): WorkerEnvironmentRecord[] {
+  // SAFETY: SQLite aggregates the numeric port column; endpointFrom validates the decoded ports.
   return rows.map((row) => fromRow(row, JSON.parse(row.ssh_fallback_ports_json) as number[]));
 }
 function find(db: DatabaseSync, environmentId: string) {
