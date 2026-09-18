@@ -26,6 +26,7 @@ import {
 } from "../../state/openclaw-agent-db.js";
 import { gatewayFixtureLifetime } from "../gateway-fixture-lifetime.test-support.js";
 import type { GatewayServerHarness } from "../server.e2e-ws-harness.js";
+import { removeSessionFixtureDirectory } from "../session-fixture-directory.test-support.js";
 import { testState } from "../test-helpers.runtime-state.js";
 import { installGatewayTestHooks } from "../test-helpers.server.js";
 
@@ -122,7 +123,7 @@ export function installGatewaySessionsTestResources(
       return;
     }
     await releaseGatewaySessionStoreFixture(sharedSessionStoreDir);
-    await fs.rm(sharedSessionStoreDir, { recursive: true, force: true });
+    await removeSessionFixtureDirectory(sharedSessionStoreDir);
   });
 
   const requireHarness = () => {
