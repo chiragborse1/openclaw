@@ -3,6 +3,8 @@ import {
   recordPluginCandidateInstallOwner,
   resolvePluginCandidateInstallOwner,
 } from "../plugins/candidate-install-owner.js";
+import type { PluginCandidate } from "../plugins/discovery.js";
+import * as indexStore from "../plugins/installed-plugin-index-store.js";
 import type { InstalledPluginIndex } from "../plugins/installed-plugin-index-types.js";
 import type { PluginManifestRecord } from "../plugins/manifest-registry.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
@@ -10,7 +12,13 @@ import { restorePluginMetadataSnapshot } from "../plugins/plugin-metadata-snapsh
 import { buildDeclaredProviderOwnerIndex } from "../plugins/provider-owner-index.js";
 
 const mocks = vi.hoisted(() => ({
+  discoverOpenClawPlugins: vi.fn(),
   resolvePluginMetadataSnapshot: vi.fn(),
+}));
+
+vi.mock("../plugins/discovery.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../plugins/discovery.js")>()),
+  discoverOpenClawPlugins: mocks.discoverOpenClawPlugins,
 }));
 
 vi.mock("../plugins/plugin-metadata-snapshot.js", async (importOriginal) => ({
@@ -57,6 +65,7 @@ function workspaceSnapshot(
   workspaceDir: string,
   plugins: PluginManifestRecord[],
   disabledIds: readonly string[] = [],
+  unselectedCandidates: PluginCandidate[] = [],
 ) {
   const index: InstalledPluginIndex = {
     version: 1,
@@ -111,27 +120,119 @@ function workspaceSnapshot(
       manifestPluginCount: plugins.length,
     },
     discovery: {
-      candidates: plugins.map((plugin) =>
-        recordPluginCandidateInstallOwner(
-          {
-            idHint: plugin.id,
-            source: plugin.source,
-            rootDir: plugin.rootDir,
-            origin: plugin.origin,
-            workspaceDir,
-          },
-          plugin.id,
+      candidates: [
+        ...plugins.map((plugin) =>
+          recordPluginCandidateInstallOwner(
+            {
+              idHint: plugin.id,
+              source: plugin.source,
+              rootDir: plugin.rootDir,
+              origin: plugin.origin,
+              ...(plugin.origin === "workspace" ? { workspaceDir } : {}),
+            },
+            plugin.id,
+          ),
         ),
-      ),
+        ...unselectedCandidates,
+      ],
       diagnostics: [],
     },
   });
 }
 
+function useWorkspaceSnapshots(snapshots: Map<string, ReturnType<typeof workspaceSnapshot>>) {
+  mocks.resolvePluginMetadataSnapshot.mockImplementation(
+    ({ workspaceDir }: { workspaceDir: string }) => snapshots.get(workspaceDir),
+  );
+  mocks.discoverOpenClawPlugins.mockImplementation(
+    ({ workspaceDir }: { workspaceDir: string }) =>
+      snapshots.get(workspaceDir)?.discovery ?? { candidates: [], diagnostics: [] },
+  );
+}
+
 describe("config IO plugin metadata snapshots", () => {
   beforeEach(() => {
     clearPluginMetadataLifecycleCaches();
+    mocks.discoverOpenClawPlugins.mockReset();
     mocks.resolvePluginMetadataSnapshot.mockReset();
+  });
+
+  it.each([1, 12])("prepares shared plugin metadata once for %i unchanged workspaces", (count) => {
+    const shared = {
+      ...manifestRecord({ id: "shared", source: "/plugins/shared" }),
+      origin: "bundled" as const,
+    };
+    const entries = Object.fromEntries(
+      Array.from({ length: count }, (_, index) => [
+        `agent-${index}`,
+        { workspace: `/srv/fleet-${index}` },
+      ]),
+    );
+    const snapshots = new Map(
+      Object.values(entries).map(({ workspace }) => [
+        workspace,
+        workspaceSnapshot(
+          workspace,
+          [shared],
+          [],
+          [
+            {
+              idHint: "shadowed",
+              source: "/plugins/shadowed/index.js",
+              rootDir: "/plugins/shadowed",
+              origin: "bundled",
+            },
+          ],
+        ),
+      ]),
+    );
+    useWorkspaceSnapshots(snapshots);
+
+    const snapshot = resolveConfigWidePluginMetadataSnapshot({
+      config: { agents: { ownership: "explicit", entries } },
+      env: {},
+    });
+
+    expect(snapshot.plugins.map((plugin) => plugin.id)).toEqual(["shared"]);
+    expect(snapshot.registryIndex).toEqual(snapshots.get("/srv/fleet-0")?.registryIndex);
+    expect(snapshot.discovery?.candidates.map((candidate) => candidate.idHint)).toEqual(
+      count === 1 ? ["shared", "shadowed"] : ["shared"],
+    );
+    expect(mocks.resolvePluginMetadataSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains secondary persisted-registry facts even when discovery is shared", () => {
+    const shared = {
+      ...manifestRecord({ id: "shared", source: "/plugins/shared" }),
+      origin: "bundled" as const,
+    };
+    const primary = workspaceSnapshot("/srv/ops", [shared]);
+    const diagnostic = {
+      level: "warn" as const,
+      code: "persisted-registry-stale-source" as const,
+      message: "Retained registry metadata",
+    };
+    const secondary = restorePluginMetadataSnapshot({
+      ...workspaceSnapshot("/srv/research", [shared]),
+      registryDiagnostics: [diagnostic],
+    });
+    useWorkspaceSnapshots(
+      new Map([
+        ["/srv/ops", primary],
+        ["/srv/research", secondary],
+      ]),
+    );
+    const persisted = vi
+      .spyOn(indexStore, "readPersistedInstalledPluginIndexSync")
+      .mockReturnValue(secondary.registryIndex);
+    try {
+      const snapshot = resolveConfigWidePluginMetadataSnapshot({ config: { agents }, env: {} });
+      expect(snapshot.registryDiagnostics).toEqual([diagnostic]);
+      expect(snapshot.registryIndex).toEqual(primary.registryIndex);
+      expect(mocks.resolvePluginMetadataSnapshot).toHaveBeenCalledTimes(2);
+    } finally {
+      persisted.mockRestore();
+    }
   });
 
   it("shares first-access inventory across config reads and alternating plugin selections", () => {
@@ -141,9 +242,7 @@ describe("config IO plugin metadata snapshots", () => {
       ["/srv/ops", workspaceSnapshot("/srv/ops", [primary])],
       ["/srv/research", workspaceSnapshot("/srv/research", [secondary])],
     ]);
-    mocks.resolvePluginMetadataSnapshot.mockImplementation(
-      ({ workspaceDir }: { workspaceDir: string }) => snapshots.get(workspaceDir),
-    );
+    useWorkspaceSnapshots(snapshots);
     const config = { agents };
     for (let read = 0; read < 2; read++) {
       const context = createConfigIoContext({ env: {}, observe: false });
@@ -181,9 +280,7 @@ describe("config IO plugin metadata snapshots", () => {
       ["/srv/ops", workspaceSnapshot("/srv/ops", [primary], ["primary"])],
       ["/srv/research", workspaceSnapshot("/srv/research", [secondary])],
     ]);
-    mocks.resolvePluginMetadataSnapshot.mockImplementation(
-      ({ workspaceDir }: { workspaceDir: string }) => snapshots.get(workspaceDir),
-    );
+    useWorkspaceSnapshots(snapshots);
     const cfg = {
       agents,
       channels: { "research-chat": { enabled: true } },
@@ -253,9 +350,7 @@ describe("config IO plugin metadata snapshots", () => {
         ]),
       ],
     ]);
-    mocks.resolvePluginMetadataSnapshot.mockImplementation(
-      ({ workspaceDir }: { workspaceDir: string }) => snapshots.get(workspaceDir),
-    );
+    useWorkspaceSnapshots(snapshots);
 
     const snapshot = resolveConfigWidePluginMetadataSnapshot({ config: { agents }, env: {} });
 

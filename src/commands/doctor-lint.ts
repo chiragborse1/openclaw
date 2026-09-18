@@ -3,15 +3,21 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolveAgentWorkspaceDir, tryResolveDefaultAgentId } from "../agents/agent-scope.js";
-import { createConfigIO, readConfigFileSnapshot } from "../config/config.js";
+import {
+  createConfigIO,
+  readConfigFileSnapshot,
+  readConfigFileSnapshotWithPluginMetadata,
+} from "../config/config.js";
 import { maybeLoadDotEnvForConfig } from "../config/io.read-helpers.js";
 import { resolveConfigPath, resolveStateDir } from "../config/paths.js";
+import { captureRuntimeConfig } from "../config/runtime-source-projection.js";
 import {
   registerBundledHealthChecks,
   resolveBundledHealthCheckPluginStateMode,
 } from "../flows/bundled-health-checks.js";
 import { configValidationIssuesToHealthFindings } from "../flows/doctor-config-validation-findings.js";
 import { scrubDoctorErrorMessage } from "../flows/doctor-error-message.js";
+import type { DoctorHealthCheckContext } from "../flows/doctor-health-contribution-types.js";
 import { resolveDoctorContributionHealthChecks } from "../flows/doctor-health-contributions.js";
 import {
   exitCodeFromFindings,
@@ -141,16 +147,35 @@ async function prepareDoctorLintExecution(
   const updateReadiness = isPostCoreConvergencePass(sourceEnv) ? "post-plugin" : undefined;
   const effectiveOpts: DoctorLintCliOptions = updateReadiness ? { ...opts, updateReadiness } : opts;
   const pluginStateMode = resolveBundledHealthCheckPluginStateMode(effectiveOpts);
-  const readConfigSnapshot = (deferredPluginMigrations?: readonly DeferredPluginMigration[]) =>
-    pluginStateMode === "direct"
-      ? readConfigFileSnapshot({ observe: false })
-      : createConfigIO({
-          env: sourceEnv,
-          configPath: resolveConfigPath(sourceEnv, resolveStateDir(sourceEnv)),
-          observe: false,
-          pluginValidation: pluginStateMode === "deferred" ? "core-only" : undefined,
-          deferredPluginMigrations,
-        }).readConfigFileSnapshot();
+  const prepareRuntimeValidation =
+    pluginStateMode === "isolated" ||
+    !effectiveOpts.onlyIds?.length ||
+    effectiveOpts.onlyIds.includes(RUNTIME_TOOL_SCHEMA_CHECK_ID);
+  const readConfigSnapshot = async (
+    deferredPluginMigrations?: readonly DeferredPluginMigration[],
+  ) => {
+    if (pluginStateMode === "direct") {
+      return prepareRuntimeValidation
+        ? (
+            await readConfigFileSnapshotWithPluginMetadata({
+              observe: false,
+              prepareValidation: "runtime",
+            })
+          ).snapshot
+        : readConfigFileSnapshot({ observe: false });
+    }
+    const io = createConfigIO({
+      env: sourceEnv,
+      configPath: resolveConfigPath(sourceEnv, resolveStateDir(sourceEnv)),
+      observe: false,
+      pluginValidation: pluginStateMode === "deferred" ? "core-only" : undefined,
+      deferredPluginMigrations,
+    });
+    return pluginStateMode === "deferred"
+      ? io.readConfigFileSnapshot()
+      : (await io.readConfigFileSnapshotWithPluginMetadata({ prepareValidation: "runtime" }))
+          .snapshot;
+  };
   const stateView: DoctorLintStateView = {
     cleanupWarnings,
     pluginMetadataEnv: sourceEnv,
@@ -224,19 +249,20 @@ async function executeDoctorLint(
     };
   }
 
+  const cfg = captureRuntimeConfig(snapshot.config);
   const sourceEnv = { ...stateView.sourceEnv };
-  const defaultAgentId = tryResolveDefaultAgentId(snapshot.config);
+  const defaultAgentId = tryResolveDefaultAgentId(cfg);
   const ctx: HealthCheckContext = {
     mode: "lint",
     runtime,
-    cfg: snapshot.config,
-    cwd: defaultAgentId ? resolveAgentWorkspaceDir(snapshot.config, defaultAgentId) : process.cwd(),
+    cfg,
+    cwd: defaultAgentId ? resolveAgentWorkspaceDir(cfg, defaultAgentId) : process.cwd(),
     env: sourceEnv,
     allowExecSecretRefs: opts.allowExec === true,
     ...(snapshot.path !== undefined ? { configPath: snapshot.path } : {}),
   };
   const availabilityFindings = registerBundledHealthChecks({
-    cfg: snapshot.config,
+    cfg,
     cwd: ctx.cwd,
     env: stateView.pluginMetadataEnv,
     runWithPluginStateSnapshot: stateView.runWithPluginStateSnapshot,
@@ -260,6 +286,7 @@ async function executeDoctorLint(
     opts.updateReadiness ? run() : withDoctorLintStateEnv(sourceEnv, run);
   const coreCtx = {
     ...ctx,
+    lintConfigSnapshot: snapshot,
     deep: opts.deep === true,
     runWithPrivateStateSnapshot,
     runWithSourceState,
@@ -488,7 +515,7 @@ async function createStateSnapshotFailureExecution(
 
 function withCoreLintContext(
   check: HealthCheck,
-  ctx: HealthCheckContext & {
+  ctx: DoctorHealthCheckContext & {
     readonly deep?: boolean;
     readonly runWithPrivateStateSnapshot: DoctorLintStateRunner;
     readonly runWithSourceState: DoctorLintStateRunner;
@@ -498,19 +525,27 @@ function withCoreLintContext(
   return {
     ...check,
     detect(_ctx, scope) {
-      const detect = async () => [
-        ...(await check.detect(ctx, scope)),
+      const detect = async (checkContext: DoctorHealthCheckContext = ctx) => [
+        ...(await check.detect(checkContext, scope)),
         ...availabilityFindings.filter((finding) => finding.checkId === check.id),
       ];
       if (check.id === SKILLS_READINESS_CHECK_ID) {
         // Discovery needs source-profile eligibility; generated links use the private install roots.
-        return ctx.runWithPrivateStateSnapshot(() => ctx.runWithSourceState(detect));
+        return ctx.runWithPrivateStateSnapshot(() => ctx.runWithSourceState(() => detect()));
       }
-      if (check.id === RUNTIME_TOOL_SCHEMA_CHECK_ID || check.id === PROJECT_CLONE_SHAPE_CHECK_ID) {
-        return ctx.runWithPrivateStateSnapshot(detect);
+      if (check.id === RUNTIME_TOOL_SCHEMA_CHECK_ID) {
+        return ctx.runWithPrivateStateSnapshot(async () => {
+          const { withDoctorLintPluginTools } = await import("./doctor-lint.plugin-tools.js");
+          return withDoctorLintPluginTools(ctx.cfg, (runWithPluginMetadataSnapshot) =>
+            detect({ ...ctx, runWithPluginMetadataSnapshot }),
+          );
+        });
+      }
+      if (check.id === PROJECT_CLONE_SHAPE_CHECK_ID) {
+        return ctx.runWithPrivateStateSnapshot(() => detect());
       }
       // Auth health uses read-only loaders but needs uncopied agent stores and source paths.
-      return check.id === AUTH_PROFILE_CHECK_ID ? ctx.runWithSourceState(detect) : detect();
+      return check.id === AUTH_PROFILE_CHECK_ID ? ctx.runWithSourceState(() => detect()) : detect();
     },
   };
 }

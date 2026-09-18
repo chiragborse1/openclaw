@@ -8,8 +8,8 @@ import type {
   BundleMcpToolRuntime,
   McpToolCatalogDiagnostic,
 } from "../agents/agent-bundle-mcp-types.js";
+import { resolveAgentEntry, withAgentRosterFactsBatch } from "../agents/agent-scope-config.js";
 import {
-  listAgentEntries,
   listAgentIds,
   resolveAgentDir,
   resolveAgentWorkspaceDir,
@@ -64,7 +64,6 @@ import type { PluginMetadataSnapshotScopeRunner } from "../plugins/current-plugi
 import type { ProviderRuntimeModel } from "../plugins/provider-runtime-model.types.js";
 import { getPluginToolMeta, setPluginToolMeta } from "../plugins/tool-metadata.js";
 import type { ProviderCatalogOrder, ProviderPlugin } from "../plugins/types.js";
-import { normalizeAgentId } from "../routing/session-key.js";
 import { buildWorkspaceSkillStatus } from "../skills/discovery/status.js";
 import type { StatusSummary } from "../status/summary.js";
 import { scrubDoctorErrorMessage } from "./doctor-error-message.js";
@@ -1170,11 +1169,10 @@ function filterPolicyActiveBundleMcpDiagnostics(params: {
   );
 }
 
-function isAcpRuntimeAgent(cfg: OpenClawConfig, agentId: string): boolean {
-  const entry = listAgentEntries(cfg).find(
-    (candidate) => normalizeAgentId(candidate.id) === agentId,
+export function listDoctorRuntimeToolSchemaAgentIds(cfg: OpenClawConfig): string[] {
+  return withAgentRosterFactsBatch(cfg, () =>
+    listAgentIds(cfg).filter((agentId) => resolveAgentEntry(cfg, agentId)?.runtime?.type !== "acp"),
   );
-  return entry?.runtime?.type === "acp";
 }
 
 export async function collectRuntimeToolSchemaFindings(
@@ -1192,11 +1190,9 @@ export async function collectRuntimeToolSchemaFindings(
   const reportedBundleRuntimeDiagnostics = new Set<string>();
   const reportedBundleRuntimeLoadErrors = new Set<string>();
   const reportedRequesterScopedServers = new Set<string>();
+  const agentIds = listDoctorRuntimeToolSchemaAgentIds(cfg);
   try {
-    for (const agentId of listAgentIds(cfg)) {
-      if (isAcpRuntimeAgent(cfg, agentId)) {
-        continue;
-      }
+    for (const agentId of agentIds) {
       const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
       const collectForAgent = async () => {
         const agentDir = resolveAgentDir(cfg, agentId);

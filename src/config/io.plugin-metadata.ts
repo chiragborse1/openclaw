@@ -1,5 +1,6 @@
 import { listAgentWorkspaceDirs } from "../agents/workspace-dirs.js";
 import { prepareBundledDiscoveryMode } from "../plugins/bundled-discovery-state.js";
+import { normalizePluginsConfig } from "../plugins/config-state.js";
 import { getGatewayPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-state.js";
 import { loadInstalledPluginIndexInstallRecordsSync } from "../plugins/installed-plugin-index-record-reader.js";
 import {
@@ -25,6 +26,7 @@ import {
   resolvePluginMetadataSnapshotCacheKey,
   type PluginMetadataSnapshot,
 } from "../plugins/plugin-metadata-snapshot.js";
+import { selectPluginMetadataWorkspaces } from "../plugins/plugin-metadata-workspaces.js";
 import { normalizePluginPolicyId } from "../plugins/plugin-policy-id.js";
 import { withSynchronousArtifactPreservingStateSnapshot } from "../state/openclaw-state-db-readonly.js";
 import { cloneEnvWithPlatformSemantics } from "./config-env-vars.js";
@@ -214,9 +216,20 @@ function resolveConfigWidePluginMetadataSnapshotImpl(
       ...(params.installRecords ? { installRecords: params.installRecords } : {}),
       allowWorkspaceScopedCurrent: true,
     });
+  // The primary registry checks persisted file freshness before discovery fills its file cache.
   const firstSnapshot = resolveSnapshot(workspaceDirs[0]);
-  const snapshots = [firstSnapshot, ...workspaceDirs.slice(1).map(resolveSnapshot)];
-  if (snapshots.length === 1) {
+  const scopes =
+    workspaceDirs.length < 2
+      ? workspaceDirs
+      : selectPluginMetadataWorkspaces({
+          workspaceDirs,
+          extraPaths: normalizePluginsConfig(params.config.plugins).loadPaths,
+          installRecords: params.installRecords,
+          stateDir: params.stateDir,
+          env,
+        });
+  const snapshots = [firstSnapshot, ...scopes.slice(1).map(resolveSnapshot)];
+  if (workspaceDirs.length === 1) {
     return firstSnapshot;
   }
   const manifestRegistry = mergeRegistries(snapshots.map((snapshot) => snapshot.manifestRegistry));

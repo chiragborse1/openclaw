@@ -1,11 +1,11 @@
 import { isRecord as isPlainRecord } from "@openclaw/normalization-core/record-coerce";
 import { uniqueValues } from "@openclaw/normalization-core/string-normalization";
-import type { ConfigFileSnapshot } from "../config/config.js";
+import type {
+  ConfigFileSnapshot,
+  ReadConfigFileSnapshotWithPluginMetadataResult,
+} from "../config/config.js";
 import { readConfigFileSnapshotForWrite } from "../config/config.js";
-import {
-  assertDeferredPluginMigrationConfigEditAllowed,
-  getDeferredPluginMigrationConfigFacts,
-} from "../config/deferred-plugin-migration-config.js";
+import { assertDeferredPluginMigrationConfigEditAllowed } from "../config/deferred-plugin-migration-config.js";
 import { visitConfigValueTree } from "../config/io.read-helpers.js";
 import { formatConfigIssueLines, normalizeConfigIssues } from "../config/issue-format.js";
 import { renderConfigValidationIssueLines } from "../config/issue-location.js";
@@ -21,6 +21,7 @@ import {
 import {
   collectUnsupportedSecretRefPolicyIssues,
   validateConfigObjectRawWithPlugins,
+  validatePreparedConfigStrict,
 } from "../config/validation.js";
 import type { DeferredPluginMigration } from "../infra/deferred-plugin-migrations.js";
 import { formatErrorMessage } from "../infra/errors.js";
@@ -87,18 +88,17 @@ export async function loadValidConfigForWrite(runtime: RuntimeEnv = defaultRunti
 
 export { formatInvalidConfigRepairHint };
 
-export async function strictlyValidateConfigSnapshotForCli(
-  snapshot: ConfigFileSnapshot,
-  pluginMetadataSnapshot?: Pick<PluginMetadataSnapshot, "manifestRegistry">,
+export async function finishConfigValidationForCli(
+  read: ReadConfigFileSnapshotWithPluginMetadataResult,
 ): Promise<ConfigFileSnapshot> {
-  if (!snapshot.valid) {
+  const { snapshot, strictValidation } = read;
+  if (!snapshot.valid || !snapshot.exists) {
     return snapshot;
   }
-  const validated = validateConfigObjectRawWithPlugins(snapshot.sourceConfig, {
-    semanticValidation: "strict",
-    pluginMetadataSnapshot,
-    deferredPluginMigrations: getDeferredPluginMigrationConfigFacts(snapshot.sourceConfig),
-  });
+  if (!strictValidation) {
+    throw new Error("Config validation requires its prepared source facts.");
+  }
+  const validated = validatePreparedConfigStrict(strictValidation);
   const issues = validated.ok
     ? await collectConfigSecretProviderErrors({ config: snapshot.runtimeConfig })
     : validated.issues;

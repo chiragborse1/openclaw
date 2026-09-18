@@ -1,7 +1,5 @@
 // Applies metadata defaults and plugin-dependent rules to a core-validated config.
-import { collectConfiguredModelRefs } from "@openclaw/model-catalog-core/configured-model-refs";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
-import { listAgentEntriesWithSource } from "../agents/agent-scope.js";
 import type { DeferredPluginMigration } from "../infra/deferred-plugin-migrations.js";
 import { planManifestModelCatalogSuppressions } from "../model-catalog/index.js";
 import { normalizePluginsConfig, normalizePluginId } from "../plugins/config-state.js";
@@ -13,7 +11,6 @@ import { loadInstalledPluginIndexInstallRecordsSync } from "../plugins/installed
 import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import type { PluginOrigin } from "../plugins/plugin-origin.types.js";
-import { validatePluginSchemaValue } from "../plugins/schema-validator.js";
 import { resolveWebSearchInstallCatalogEntries } from "../plugins/web-search-install-catalog.js";
 import { isRecord } from "../utils.js";
 import { GENERATED_BUNDLED_CHANNEL_CONFIG_METADATA } from "./bundled-channel-config-metadata.generated.js";
@@ -31,7 +28,6 @@ import {
   hasChannelDmPolicyDependencyWarningCandidates,
   normalizeBundledChannelId,
 } from "./validation-channel-rules.js";
-import { collectHeartbeatOwnerWarnings } from "./validation-core.js";
 import {
   formatChannelConfigIssueMessage,
   resolveDeferredChannelConfigWarning,
@@ -41,6 +37,12 @@ import {
   createPluginRegistryConfigValidator,
   collectSecretRefProviderSourceIssues,
 } from "./validation-plugin-registry.js";
+import {
+  prepareConfigPluginInputs,
+  validatePreparedPluginSchemaValue,
+  type PreparedConfigPluginInputs,
+  type PreparedPluginSchemaValidations,
+} from "./validation-prepared.js";
 import type { ValidateConfigWithPluginsResult } from "./validation.types.js";
 
 export type ValidateConfigWithPluginsParams = {
@@ -77,6 +79,8 @@ export function validatePreparedConfigWithPlugins(
     applyDefaults: boolean;
     installedPluginRecordIds?: ReadonlySet<string>;
     onManifestRegistryResolved?: (registry: PluginManifestRegistry) => void;
+    preparedInputs?: PreparedConfigPluginInputs;
+    schemaValidations?: PreparedPluginSchemaValidations;
   },
 ): ValidateConfigWithPluginsResult {
   const rememberRegistry = (registry: PluginManifestRegistry): RegistryInfo => {
@@ -136,7 +140,8 @@ export function validatePreparedConfigWithPlugins(
   const deferredPluginIds = new Set(
     opts.deferredPluginMigrations?.map(({ pluginId }) => normalizePluginId(pluginId)),
   );
-  warnings.push(...collectHeartbeatOwnerWarnings(config));
+  const inputs = opts.preparedInputs ?? prepareConfigPluginInputs(config);
+  warnings.push(...inputs.heartbeatWarnings);
   const hasExplicitPluginsConfig = isRecord(raw) && Object.hasOwn(raw, "plugins");
 
   let compatPluginIds: ReadonlySet<string> | null = null;
@@ -396,7 +401,7 @@ export function validatePreparedConfigWithPlugins(
   };
 
   const validateConfiguredModelRefs = (): void => {
-    const configuredRefs = collectConfiguredModelRefs(config);
+    const configuredRefs = inputs.modelRefs;
     if (configuredRefs.length === 0) {
       return;
     }
@@ -517,14 +522,17 @@ export function validatePreparedConfigWithPlugins(
       // (channel-config-metadata.ts merges every plugin origin, not just bundled), so it
       // is untrusted manifest input and must use the isolation path instead of the
       // throwing validator reserved for repo-owned schemas.
-      const result = validatePluginSchemaValue({
-        origin: channelSchema.origin,
-        schema: channelSchema.schema,
-        cacheKey: `channel:${trimmed}`,
-        value: config.channels[trimmed],
-        applyDefaults: true, // Always apply defaults for plugin schema validation;
-        // writeConfigFile persists persistCandidate, not validated.config (#61841)
-      });
+      const result = validatePreparedPluginSchemaValue(
+        {
+          origin: channelSchema.origin,
+          schema: channelSchema.schema,
+          cacheKey: `channel:${trimmed}`,
+          value: config.channels[trimmed],
+          applyDefaults: true, // Always apply defaults for plugin schema validation;
+          // writeConfigFile persists persistCandidate, not validated.config (#61841)
+        },
+        opts.schemaValidations,
+      );
       if (!result.ok) {
         for (const error of result.errors) {
           issues.push({
@@ -584,7 +592,7 @@ export function validatePreparedConfigWithPlugins(
     config.agents?.defaults?.heartbeat?.target,
     "agents.defaults.heartbeat.target",
   );
-  for (const { entry, source } of listAgentEntriesWithSource(config)) {
+  for (const { entry, source } of inputs.agents) {
     const pathPrefix =
       source.kind === "entries" ? `agents.entries.${source.key}` : `agents.list.${source.index}`;
     validateHeartbeatTarget(entry?.heartbeat?.target, `${pathPrefix}.heartbeat.target`);
@@ -599,6 +607,7 @@ export function validatePreparedConfigWithPlugins(
       config,
       env: opts.env,
       applyDefaults: opts.applyDefaults,
+      schemaValidations: opts.schemaValidations,
       registry,
       knownIds: ensureKnownIds(),
       normalizedPlugins: ensureNormalizedPlugins(),

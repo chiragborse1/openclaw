@@ -17,6 +17,10 @@ import {
   validatePreparedConfigWithPlugins,
   type ValidateConfigWithPluginsParams,
 } from "./validation-plugin-rules.js";
+import {
+  prepareConfigPluginInputs,
+  type PreparedStrictConfigValidation,
+} from "./validation-prepared.js";
 import type {
   PreparedConfigValidationPluginMetadata,
   ValidateConfigWithPluginsResult,
@@ -45,6 +49,22 @@ export async function validateConfigObjectWithPluginsAsync(
   raw: unknown,
   params: ValidateConfigWithPluginsAsyncParams,
 ): Promise<ValidateConfigWithPluginsResult> {
+  return validateConfigObjectWithPluginsAsyncInternal(raw, params, false);
+}
+
+/** Explicit validation prepares source facts without changing ordinary snapshot reads. */
+export async function validateConfigObjectWithStrictFactsAsync(
+  raw: unknown,
+  params: ValidateConfigWithPluginsAsyncParams,
+): Promise<ValidateConfigWithPluginsResult> {
+  return validateConfigObjectWithPluginsAsyncInternal(raw, params, true);
+}
+
+async function validateConfigObjectWithPluginsAsyncInternal(
+  raw: unknown,
+  params: ValidateConfigWithPluginsAsyncParams,
+  prepareStrictValidation: boolean,
+): Promise<ValidateConfigWithPluginsResult> {
   const { loadPluginMetadataSnapshotAsync, ...validationParams } = params;
   const prepared = prepareConfigObjectWithPlugins(raw, validationParams);
   if (!prepared.ok) {
@@ -66,12 +86,50 @@ export async function validateConfigObjectWithPluginsAsync(
     ),
   };
   const metadata = await loadPluginMetadataSnapshotAsync(pending.parsedConfig);
-  return finishConfigObjectWithPlugins(
+  const strictConfig = prepareStrictValidation
+    ? inheritLegacyDefaultAgentId(
+        pending.parsedConfig,
+        cloneConfigWithResolutionFacts(pending.parsedConfig),
+      )
+    : undefined;
+  const strictValidation: PreparedStrictConfigValidation | undefined = strictConfig
+    ? {
+        raw: pending.migrated,
+        config: strictConfig,
+        inputs: prepareConfigPluginInputs(strictConfig),
+        schemas: new Map(),
+        manifestRegistry: metadata.manifestRegistry,
+        installedPluginRecordIds: metadata.installedPluginRecordIds,
+        deferredPluginMigrations: validationParams.deferredPluginMigrations,
+        env: validationParams.env,
+        homedir: validationParams.homedir,
+      }
+    : undefined;
+  const result = finishConfigObjectWithPlugins(
     pending,
     { ...validationParams, pluginMetadataSnapshot: metadata },
     true,
     metadata.installedPluginRecordIds,
+    strictValidation,
   );
+  return result.ok && strictValidation ? { ...result, strictValidation } : result;
+}
+
+/** Complete raw strict policy checks using the core and schema facts already prepared by IO. */
+export function validatePreparedConfigStrict(
+  prepared: PreparedStrictConfigValidation,
+): ValidateConfigWithPluginsResult {
+  return validatePreparedConfigWithPlugins(prepared.raw, prepared.config, {
+    env: prepared.env,
+    homedir: prepared.homedir,
+    applyDefaults: false,
+    semanticValidation: "strict",
+    pluginMetadataSnapshot: { manifestRegistry: prepared.manifestRegistry },
+    installedPluginRecordIds: prepared.installedPluginRecordIds,
+    deferredPluginMigrations: prepared.deferredPluginMigrations,
+    preparedInputs: prepared.inputs,
+    schemaValidations: prepared.schemas,
+  });
 }
 
 export function validateConfigObjectRawWithPlugins(
@@ -129,12 +187,14 @@ function finishConfigObjectWithPlugins(
   params: ValidateConfigWithPluginsParams | undefined,
   applyDefaults: boolean,
   installedPluginRecordIds?: ReadonlySet<string>,
+  strictValidation?: PreparedStrictConfigValidation,
 ): ValidateConfigWithPluginsResult {
   let manifestRegistry = params?.pluginMetadataSnapshot?.manifestRegistry;
   const result = validatePreparedConfigWithPlugins(migrated, parsedConfig, {
     ...params,
     applyDefaults,
     installedPluginRecordIds,
+    schemaValidations: strictValidation?.schemas,
     pluginValidation: params?.pluginValidation ?? "full",
     semanticValidation: params?.semanticValidation ?? "runtime",
     onManifestRegistryResolved: (registry) => {

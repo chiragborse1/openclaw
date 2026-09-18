@@ -75,6 +75,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/plugins/plugin-lifecycle-lease.test.ts",
   "src/plugins/plugin-lifecycle-refusal.test.ts",
   "src/plugins/plugin-registry-inspection.test.ts",
+  "src/plugins/tools-preparation.test.ts",
   "src/plugins/status.registry-snapshot.test.ts",
   "src/plugins/status.runtime-inspection.test.ts",
 

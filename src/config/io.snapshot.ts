@@ -30,7 +30,10 @@ import {
   restoreEnvChangesIfUnchanged,
   snapshotEnv,
 } from "./io.read-helpers.js";
-import { materializeConfigSnapshotDefaults } from "./io.snapshot-preparation.js";
+import {
+  materializeConfigSnapshotDefaults,
+  prepareConfigSnapshotValidation,
+} from "./io.snapshot-preparation.js";
 import type { CapturedConfigSnapshotPreparation } from "./io.snapshot-preparation.types.js";
 import {
   collectInvalidConfigLegacyIssues,
@@ -40,6 +43,7 @@ import {
 import type {
   BestEffortConfigSnapshot,
   ConfigSnapshotReadOptions,
+  ConfigSnapshotMetadataReadOptions,
   PreparedConfigRecovery,
   ReadConfigFileSnapshotForWriteResult,
   ReadConfigFileSnapshotInternalResult,
@@ -58,6 +62,7 @@ import type { ConfigFileSnapshot, LegacyConfigIssue, OpenClawConfig } from "./ty
 import { validateConfigObjectWithPlugins } from "./validation.js";
 
 type InternalReadOptions = {
+  prepareValidation?: "runtime" | "strict";
   preparation?: CapturedConfigSnapshotPreparation | null;
   allowCurrentPluginMetadata?: boolean;
   recoverSuspicious?: boolean;
@@ -278,26 +283,36 @@ async function readConfigSnapshotWithPreparation(
           ? preparation((prepare) =>
               prepare({
                 kind: "validate",
+                prepareValidation: options.prepareValidation,
                 context,
                 metadata: pluginMetadata,
                 raw: validationConfigRaw,
                 sourceRaw: effectiveParsed,
               }),
             )
-          : withSynchronousArtifactPreservingStateSnapshot(() => {
-              const pending = context.resolveDeferredPluginMigrations();
-              return {
-                deferredPluginMigrations: pending,
-                validated: validateConfigObjectWithPlugins(validationConfigRaw, {
-                  ...pathResolution,
-                  pluginValidation: context.options.pluginValidation,
-                  loadPluginMetadataSnapshot: pluginMetadata.load,
-                  sourceRaw: effectiveParsed,
-                  preservedLegacyRootKeys: context.options.preservedLegacyRootKeys,
+          : options.prepareValidation
+            ? prepareConfigSnapshotValidation({
+                kind: "validate",
+                prepareValidation: options.prepareValidation,
+                context,
+                metadata: pluginMetadata,
+                raw: validationConfigRaw,
+                sourceRaw: effectiveParsed,
+              })
+            : withSynchronousArtifactPreservingStateSnapshot(() => {
+                const pending = context.resolveDeferredPluginMigrations();
+                return {
                   deferredPluginMigrations: pending,
-                }),
-              };
-            }),
+                  validated: validateConfigObjectWithPlugins(validationConfigRaw, {
+                    ...pathResolution,
+                    pluginValidation: context.options.pluginValidation,
+                    loadPluginMetadataSnapshot: pluginMetadata.load,
+                    sourceRaw: effectiveParsed,
+                    preservedLegacyRootKeys: context.options.preservedLegacyRootKeys,
+                    deferredPluginMigrations: pending,
+                  }),
+                };
+              }),
     );
     if (!validated.ok) {
       const availableSnapshot = pluginMetadata.getSnapshot();
@@ -389,6 +404,7 @@ async function readConfigSnapshotWithPreparation(
         });
         return await readConfigFileSnapshotInternal(context, {
           preparation,
+          prepareValidation: options.prepareValidation,
           allowCurrentPluginMetadata: options.allowCurrentPluginMetadata,
           recoverSuspicious: options.recoverSuspicious,
           skipSuspiciousRecovery: true,
@@ -431,6 +447,7 @@ async function readConfigSnapshotWithPreparation(
           includeFileHashesForWrite,
           includeFileTargetsForWrite,
           pluginMetadataSnapshot: pluginMetadata.getSnapshot(),
+          ...(validated.strictValidation ? { strictValidation: validated.strictValidation } : {}),
         },
         { observe: !callerRejectedSuspiciousRecovery },
       ),
@@ -548,11 +565,23 @@ export async function readConfigFileSnapshotFromContext(
 
 export async function readConfigFileSnapshotWithPluginMetadataFromContext(
   context: ConfigIoContext,
-  options: ConfigSnapshotReadOptions = {},
+  options: ConfigSnapshotMetadataReadOptions = {},
+): Promise<ReadConfigFileSnapshotWithPluginMetadataResult> {
+  const read = () => readConfigSnapshotWithPluginMetadata(context, options);
+  // Explicit CLI validation prepares async state facts before command admission.
+  return options.prepareValidation && !context.deps.observe
+    ? withArtifactPreservingStateReads(read)
+    : read();
+}
+
+async function readConfigSnapshotWithPluginMetadata(
+  context: ConfigIoContext,
+  options: ConfigSnapshotMetadataReadOptions,
 ): Promise<ReadConfigFileSnapshotWithPluginMetadataResult> {
   const preparation = captureManagedConfigSnapshotPreparation(context.configPath);
   const result = await readConfigFileSnapshotInternal(context, {
     preparation,
+    prepareValidation: options.prepareValidation,
     allowCurrentPluginMetadata: options.allowCurrentPluginMetadata,
     recoverSuspicious: options.recoverSuspicious === true,
     allowSuspiciousRecovery: options.allowSuspiciousRecovery,
@@ -572,6 +601,8 @@ export async function readConfigFileSnapshotWithPluginMetadataFromContext(
           config: result.snapshot.sourceConfig,
         }),
       );
+    } else if (options.prepareValidation) {
+      await pluginMetadata.loadAsync(result.snapshot.sourceConfig);
     } else {
       pluginMetadata.load(result.snapshot.sourceConfig);
     }
@@ -580,6 +611,7 @@ export async function readConfigFileSnapshotWithPluginMetadataFromContext(
   preparation?.assertCurrent();
   return {
     snapshot: result.snapshot,
+    ...(result.strictValidation ? { strictValidation: result.strictValidation } : {}),
     ...(pluginMetadataSnapshot ? { pluginMetadataSnapshot } : {}),
   };
 }

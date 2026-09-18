@@ -31,6 +31,7 @@ import {
 import type {
   BestEffortConfigSnapshot,
   ConfigSnapshotReadOptions,
+  ConfigSnapshotMetadataReadOptions,
   ConfigWriteNotification,
   ConfigWriteOptions,
   ConfigWriteResult,
@@ -326,7 +327,7 @@ export async function readConfigFileSnapshot(
 
 export async function readConfigFileSnapshotWithPluginMetadata(
   options?: Pick<
-    ConfigSnapshotReadOptions,
+    ConfigSnapshotMetadataReadOptions,
     | "allowCurrentPluginMetadata"
     | "deferredPluginMigrations"
     | "allowSuspiciousRecovery"
@@ -334,6 +335,7 @@ export async function readConfigFileSnapshotWithPluginMetadata(
     | "lowerPrecedenceEnv"
     | "measure"
     | "observe"
+    | "prepareValidation"
     | "recoverSuspicious"
     | "skipPluginValidation"
   >,
@@ -348,6 +350,7 @@ export async function readConfigFileSnapshotWithPluginMetadata(
     ...(options?.lowerPrecedenceEnv ? { lowerPrecedenceEnv: options.lowerPrecedenceEnv } : {}),
     ...(options?.skipPluginValidation ? { pluginValidation: "skip" as const } : {}),
   }).readConfigFileSnapshotWithPluginMetadata({
+    prepareValidation: options?.prepareValidation,
     allowCurrentPluginMetadata: options?.allowCurrentPluginMetadata,
     recoverSuspicious: options?.recoverSuspicious === true,
     allowSuspiciousRecovery: options?.allowSuspiciousRecovery,
