@@ -19,7 +19,7 @@ await runWithSqliteMutationWorkerCoordination(
     if (workerData.operation === "hold") {
       const owner = acquireStateDatabaseCoordinator({ databasePath: coordination.databasePath });
       try {
-        parentPort.postMessage("held");
+        parentPort.postMessage("held", []);
         const release = new Int32Array(workerData.release);
         Atomics.wait(release, 0, 0);
       } finally {
@@ -29,7 +29,7 @@ await runWithSqliteMutationWorkerCoordination(
       const lease = claimOpenClawAgentDatabaseLease(options);
       releaseOpenClawAgentDatabaseLease(lease, { env: options.env });
       closeOpenClawStateDatabase();
-      parentPort.postMessage("claimed");
+      parentPort.postMessage("claimed", []);
     }
   },
 );
