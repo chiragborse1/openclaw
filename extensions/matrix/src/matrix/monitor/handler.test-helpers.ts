@@ -110,7 +110,6 @@ type MatrixHandlerTestHarnessOptions = {
   runPrepared?: MatrixRunPreparedMock;
   inboundDeduper?: MatrixMonitorHandlerParams["inboundDeduper"];
   shouldAckReaction?: MatrixMonitorHandlerParams["core"]["channel"]["reactions"]["shouldAckReaction"];
-  enqueueSystemEvent?: (...args: unknown[]) => void;
   getRoomInfo?: MatrixMonitorHandlerParams["getRoomInfo"];
   getMemberDisplayName?: MatrixMonitorHandlerParams["getMemberDisplayName"];
   resolveLiveUserAllowlist?: MatrixMonitorHandlerParams["resolveLiveUserAllowlist"];
@@ -118,7 +117,6 @@ type MatrixHandlerTestHarnessOptions = {
 
 type MatrixHandlerTestHarness = {
   dispatchInboundMessage: MatrixDispatchInboundMessage;
-  enqueueSystemEvent: (...args: unknown[]) => void;
   finalizeInboundContext: (ctx: unknown) => unknown;
   handler: ReturnType<typeof createMatrixRoomMessageHandler>;
   readAllowFromStore: MatrixMonitorHandlerParams["core"]["channel"]["pairing"]["readAllowFromStore"];
@@ -196,7 +194,6 @@ export function createMatrixHandlerTestHarness(
     (options.formatAgentEnvelope ?? (({ body }: { body: string }) => body))({
       body: input.body,
     })) as NonNullable<MatrixMonitorHandlerParams["createChannelInboundEnvelopeBuilder"]>;
-  const enqueueSystemEvent = options.enqueueSystemEvent ?? vi.fn();
   const runPrepared =
     options.runPrepared ??
     vi.fn<MatrixRunPreparedMockFn>(async (turn) => {
@@ -344,9 +341,6 @@ export function createMatrixHandlerTestHarness(
           shouldAckReaction: options.shouldAckReaction ?? (() => false),
         },
       },
-      system: {
-        enqueueSystemEvent,
-      },
     } as never,
     cfg: cfgForHandler as never,
     accountId: options.accountId ?? "ops",
@@ -402,7 +396,6 @@ export function createMatrixHandlerTestHarness(
 
   return {
     dispatchInboundMessage,
-    enqueueSystemEvent,
     finalizeInboundContext,
     handler,
     readAllowFromStore,

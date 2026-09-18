@@ -1,4 +1,8 @@
 // Matrix tests cover reaction events plugin behavior.
+import {
+  peekSystemEventEntries,
+  resetSystemEventsForTest,
+} from "openclaw/plugin-sdk/system-event-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   registerMatrixApprovalReactionTarget as registerMatrixApprovalReactionTargetRaw,
@@ -62,6 +66,7 @@ vi.mock("../send.js", () => ({
 }));
 
 beforeEach(() => {
+  resetSystemEventsForTest();
   resolveMatrixApproval.mockReset().mockResolvedValue({
     applied: true,
     approval: { id: "req-123", status: "allowed", decision: "allow-once" },
@@ -70,6 +75,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  resetSystemEventsForTest();
   for (const target of touchedTargets.values()) {
     await unregisterMatrixApprovalReactionTarget(target);
   }
@@ -105,9 +111,6 @@ function buildCore() {
           matchedBy: "peer",
         }),
       },
-    },
-    system: {
-      enqueueSystemEvent: vi.fn(),
     },
   } as unknown as Parameters<typeof handleInboundMatrixReaction>[0]["core"];
 }
@@ -202,7 +205,7 @@ describe("matrix approval reactions", () => {
       accountId: "default",
       senderId: "@owner:example.org",
     });
-    expect(core.system.enqueueSystemEvent).not.toHaveBeenCalled();
+    expect(peekSystemEventEntries("agent:main:matrix:channel:!ops:example.org")).toEqual([]);
   });
 
   it("keeps ordinary reactions on bot messages as generic reaction events", async () => {
@@ -225,13 +228,12 @@ describe("matrix approval reactions", () => {
     });
 
     expect(resolveMatrixApproval).not.toHaveBeenCalled();
-    expect(core.system.enqueueSystemEvent).toHaveBeenCalledWith(
-      "Matrix reaction added: 👍 by Owner on msg $msg-1",
-      {
-        sessionKey: "agent:main:matrix:channel:!ops:example.org",
+    expect(peekSystemEventEntries("agent:main:matrix:channel:!ops:example.org")).toEqual([
+      expect.objectContaining({
+        text: "Matrix reaction added: 👍 by Owner on msg $msg-1",
         contextKey: "matrix:reaction:add:!ops:example.org:$msg-1:@owner:example.org:👍",
-      },
-    );
+      }),
+    ]);
   });
 
   it("still resolves approval reactions when generic reaction notifications are off", async () => {
@@ -273,7 +275,7 @@ describe("matrix approval reactions", () => {
       accountId: "default",
       senderId: "@owner:example.org",
     });
-    expect(core.system.enqueueSystemEvent).not.toHaveBeenCalled();
+    expect(peekSystemEventEntries("agent:main:matrix:channel:!ops:example.org")).toEqual([]);
   });
 
   it("resolves registered approval reactions without fetching the target event", async () => {
@@ -302,7 +304,7 @@ describe("matrix approval reactions", () => {
       accountId: "default",
       senderId: "@owner:example.org",
     });
-    expect(core.system.enqueueSystemEvent).not.toHaveBeenCalled();
+    expect(peekSystemEventEntries("agent:main:matrix:channel:!ops:example.org")).toEqual([]);
   });
 
   it("resolves plugin approval reactions through the same Matrix reaction path", async () => {
@@ -339,7 +341,7 @@ describe("matrix approval reactions", () => {
       accountId: "default",
       senderId: "@owner:example.org",
     });
-    expect(core.system.enqueueSystemEvent).not.toHaveBeenCalled();
+    expect(peekSystemEventEntries("agent:main:matrix:channel:!ops:example.org")).toEqual([]);
   });
 
   it("unregisters stale approval anchors after not-found resolution", async () => {
@@ -415,7 +417,7 @@ describe("matrix approval reactions", () => {
       accountId: "default",
       senderId: "@owner:example.org",
     });
-    expect(core.system.enqueueSystemEvent).not.toHaveBeenCalled();
+    expect(peekSystemEventEntries("agent:main:matrix:channel:!ops:example.org")).toEqual([]);
   });
 
   it("terminalizes every sibling prompt when this surface wins", async () => {
@@ -552,6 +554,6 @@ describe("matrix approval reactions", () => {
 
     expect(client.getEvent).not.toHaveBeenCalled();
     expect(resolveMatrixApproval).not.toHaveBeenCalled();
-    expect(core.system.enqueueSystemEvent).not.toHaveBeenCalled();
+    expect(peekSystemEventEntries("agent:main:matrix:channel:!ops:example.org")).toEqual([]);
   });
 });
