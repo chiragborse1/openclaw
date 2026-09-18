@@ -383,7 +383,7 @@ function readShrinkwrapOverrides() {
   );
 }
 
-function packageJsonForShrinkwrap(packageJson, shrinkwrapOverrides) {
+function packageJsonForShrinkwrap(packageJson, shrinkwrapOverrides, options = {}) {
   const normalized = { ...packageJson };
   delete normalized.devDependencies;
   for (const field of ["dependencies", "optionalDependencies", "peerDependencies"]) {
@@ -392,9 +392,15 @@ function packageJsonForShrinkwrap(packageJson, shrinkwrapOverrides) {
       continue;
     }
     normalized[field] = Object.fromEntries(
-      Object.entries(dependencies).filter(
-        ([, spec]) => typeof spec !== "string" || !spec.startsWith("workspace:"),
-      ),
+      Object.entries(dependencies).flatMap(([name, spec]) => {
+        if (typeof spec !== "string" || !spec.startsWith("workspace:")) {
+          return [[name, spec]];
+        }
+        const releaseVersion = options.releaseWorkspaceDependencies?.[name];
+        return typeof releaseVersion === "string" && releaseVersion.length > 0
+          ? [[name, releaseVersion]]
+          : [];
+      }),
     );
   }
   normalized.overrides = mergeOverrides(packageJson.overrides, shrinkwrapOverrides, {});
@@ -735,10 +741,29 @@ function generateShrinkwrap(packageDir, options = {}) {
       "--no-fund",
       ...peerResolutionArgs,
     ];
+    const releaseWorkspaceDependencies =
+      path.resolve(packageDir) === ROOT_DIR && packageJson.dependencies?.["@openclaw/ai"]
+        ? { "@openclaw/ai": packageJson.version }
+        : undefined;
     writeFileSync(
       path.join(tempDir, "package.json"),
-      `${JSON.stringify(packageJsonForShrinkwrap(packageJson, shrinkwrapOverrides), null, 2)}\n`,
+      `${JSON.stringify(
+        packageJsonForShrinkwrap(packageJson, shrinkwrapOverrides, {
+          releaseWorkspaceDependencies,
+        }),
+        null,
+        2,
+      )}\n`,
     );
+    if (releaseWorkspaceDependencies && currentShrinkwrap) {
+      // The release package depends on a separately published workspace tarball.
+      // Seed npm with the prepared exact-version entry so unreleased candidates
+      // can regenerate deterministically before that version reaches the registry.
+      writeFileSync(
+        path.join(tempDir, "npm-shrinkwrap.json"),
+        `${JSON.stringify(currentShrinkwrap, null, 2)}\n`,
+      );
+    }
     runNpm(npmInstallArgs, tempDir);
     runNpm(
       ["shrinkwrap", "--ignore-scripts", "--no-audit", "--no-fund", ...peerResolutionArgs],
@@ -753,14 +778,25 @@ function generateShrinkwrap(packageDir, options = {}) {
       ),
       currentShrinkwrap,
     );
-    assertShrinkwrapMatchesPnpmLock(generated);
+    assertShrinkwrapMatchesPnpmLock(
+      generated,
+      new Set(
+        Object.entries(releaseWorkspaceDependencies ?? {}).map(
+          ([name, version]) => `${name}@${version}`,
+        ),
+      ),
+    );
     return `${JSON.stringify(generated, null, 2)}\n`;
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
 }
 
-function collectPnpmLockViolations(shrinkwrap, pnpmLockPackages = readPnpmLockPackages()) {
+function collectPnpmLockViolations(
+  shrinkwrap,
+  pnpmLockPackages = readPnpmLockPackages(),
+  allowedPackageKeys = new Set(),
+) {
   const packages = shrinkwrap?.packages;
   if (!packages || typeof packages !== "object") {
     return [];
@@ -775,7 +811,7 @@ function collectPnpmLockViolations(shrinkwrap, pnpmLockPackages = readPnpmLockPa
       continue;
     }
     const packageKey = `${packageName}@${metadata.version}`;
-    if (!pnpmLockPackages.has(packageKey)) {
+    if (!pnpmLockPackages.has(packageKey) && !allowedPackageKeys.has(packageKey)) {
       violations.push({ path: lockPath, packageKey });
     }
   }
@@ -1057,8 +1093,12 @@ function restoreCurrentPnpmLockedPackages(
   return generated;
 }
 
-function assertShrinkwrapMatchesPnpmLock(shrinkwrap) {
-  const violations = collectPnpmLockViolations(shrinkwrap);
+function assertShrinkwrapMatchesPnpmLock(shrinkwrap, allowedPackageKeys = new Set()) {
+  const violations = collectPnpmLockViolations(
+    shrinkwrap,
+    readPnpmLockPackages(),
+    allowedPackageKeys,
+  );
   if (violations.length === 0) {
     return;
   }

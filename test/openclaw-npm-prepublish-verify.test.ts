@@ -3,6 +3,7 @@ import {
   openClawNpmPrepublishVerifyUsage,
   parseOpenClawNpmPrepublishVerifyArgs,
   usesPreparedLocalDependencyInstall,
+  verifiesPublicRegistryGatewayStatus,
 } from "../scripts/openclaw-npm-prepublish-verify.ts";
 
 describe("parseOpenClawNpmPrepublishVerifyArgs", () => {
@@ -54,5 +55,13 @@ describe("usesPreparedLocalDependencyInstall", () => {
     expect(usesPreparedLocalDependencyInstall(0)).toBe(false);
     expect(usesPreparedLocalDependencyInstall(1)).toBe(true);
     expect(usesPreparedLocalDependencyInstall(2)).toBe(false);
+  });
+});
+
+describe("verifiesPublicRegistryGatewayStatus", () => {
+  it("runs the gateway status smoke only when dependencies come from the public registry", () => {
+    expect(verifiesPublicRegistryGatewayStatus(0)).toBe(true);
+    expect(verifiesPublicRegistryGatewayStatus(1)).toBe(false);
+    expect(verifiesPublicRegistryGatewayStatus(2)).toBe(false);
   });
 });

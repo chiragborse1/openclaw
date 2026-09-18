@@ -45,6 +45,22 @@ describe("generate-npm-shrinkwrap", () => {
     expect(normalized.peerDependencies).toEqual({});
   });
 
+  it("pins explicitly retained release workspace dependencies to the package version", () => {
+    const normalized = packageJsonForShrinkwrap(
+      {
+        version: "2026.7.34",
+        dependencies: { "@openclaw/ai": "workspace:*", chalk: "5.6.2" },
+      },
+      {},
+      { releaseWorkspaceDependencies: { "@openclaw/ai": "2026.7.34" } },
+    );
+
+    expect(normalized.dependencies).toEqual({
+      "@openclaw/ai": "2026.7.34",
+      chalk: "5.6.2",
+    });
+  });
+
   it("runs npm shrinkwrap through cmd.exe for Windows npm shims", () => {
     const execPath = "C:\\nodejs\\node.exe";
     const npmCmdPath = path.win32.resolve(path.win32.dirname(execPath), "npm.cmd");
@@ -237,6 +253,9 @@ describe("generate-npm-shrinkwrap", () => {
         path: "node_modules/react",
       },
     ]);
+    expect(collectPnpmLockViolations(lockfile, pnpmPackages, new Set(["react@19.2.6"]))).toEqual(
+      [],
+    );
   });
 
   it("restores current shrinkwrap entries when npm floats past pnpm's lock", () => {

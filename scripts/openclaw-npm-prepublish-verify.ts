@@ -79,6 +79,10 @@ export function usesPreparedLocalDependencyInstall(dependencyTarballCount: numbe
   return dependencyTarballCount === 1;
 }
 
+export function verifiesPublicRegistryGatewayStatus(dependencyTarballCount: number): boolean {
+  return dependencyTarballCount === 0;
+}
+
 function npmExec(args: string[], cwd: string): string {
   const invocation = resolveNpmCommandInvocation({
     npmArgs: args,
@@ -101,6 +105,7 @@ function main(argv = process.argv.slice(2)): void {
   const prefixDir = join(workingDir, "prefix");
   try {
     let binaryInvocation: NpmVerifyCommandInvocation;
+    let gatewayStatusInvocation: NpmVerifyCommandInvocation | undefined;
     let packageRoot: string;
     if (usesPreparedLocalDependencyInstall(args.dependencyTarballPaths.length)) {
       const aiTarballPath = realpathSync(args.dependencyTarballPaths[0]);
@@ -158,6 +163,12 @@ function main(argv = process.argv.slice(2)): void {
       const globalRoot = npmExec(["root", "-g", "--prefix", prefixDir], workingDir);
       packageRoot = join(globalRoot, "openclaw");
       binaryInvocation = resolveInstalledBinaryCommandInvocation(prefixDir, ["--version"]);
+      if (verifiesPublicRegistryGatewayStatus(args.dependencyTarballPaths.length)) {
+        gatewayStatusInvocation = resolveInstalledBinaryCommandInvocation(prefixDir, [
+          "gateway",
+          "status",
+        ]);
+      }
     }
     const pkg = JSON.parse(
       readFileSync(join(packageRoot, "package.json"), "utf8"),
@@ -175,6 +186,9 @@ function main(argv = process.argv.slice(2)): void {
       );
     }
     if (errors.length === 0) {
+      if (gatewayStatusInvocation) {
+        runNpmVerifyCommand(gatewayStatusInvocation, workingDir);
+      }
       runInstalledWorkspaceBootstrapSmoke({ packageRoot });
     }
     if (errors.length > 0) {
