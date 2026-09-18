@@ -8,6 +8,7 @@ import {
   resetPublishedConfigRuntimeEnv,
   type PreparedConfigRuntimeEnv,
 } from "./config-env-vars.js";
+import { getScopedConfigSnapshotPreparation } from "./io.snapshot-preparation-scope.js";
 import type {
   CapturedConfigSnapshotPreparation,
   ConfigSnapshotPreparation,
@@ -504,15 +505,19 @@ export function registerManagedRuntimeConfigWriteOwner(
 export function captureManagedConfigSnapshotPreparation(
   configPath: string,
 ): CapturedConfigSnapshotPreparation | null {
+  const scoped = getScopedConfigSnapshotPreparation(configPath);
   const owner = [...(managedRuntimeConfigWriteOwners.get(configPath) ?? [])].find(
     (candidate) => candidate.prepareSnapshot,
   );
-  const prepare = owner?.prepareSnapshot;
-  if (!owner || !prepare) {
+  const prepare = scoped?.prepare ?? owner?.prepareSnapshot;
+  if (!prepare) {
     return null;
   }
+  const isCurrent =
+    scoped?.isCurrent ??
+    (() => Boolean(owner && managedRuntimeConfigWriteOwners.get(configPath)?.has(owner)));
   const assertCurrent = () => {
-    if (!managedRuntimeConfigWriteOwners.get(configPath)?.has(owner)) {
+    if (!isCurrent()) {
       throw new Error("Gateway config snapshot preparation owner has closed");
     }
   };

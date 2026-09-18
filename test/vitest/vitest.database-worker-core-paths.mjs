@@ -13,6 +13,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/agents/harness/native-hook-relay.lifecycle.test.ts",
   "src/agents/harness/native-hook-relay.test.ts",
   "src/cli/native-hook-relay-cli.locator-worker.test.ts",
+  "src/cli/command-execution-startup.test.ts",
   "src/cli/resume-cli.test.ts",
   "src/snapshot/git-backup.test.ts",
   "src/plugins/conversation-binding.test.ts",

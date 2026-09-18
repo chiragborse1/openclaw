@@ -25,14 +25,20 @@ type CatalogPublication = {
   runtimeModels: PreparedModelCatalogInventory["runtimeModels"] | undefined;
   configuredRuntimeModels: PreparedModelRuntimeCatalogFacts["configuredRuntimeModels"];
 };
-type CatalogPublicationChange = { previous: CatalogPublication; current: CatalogPublication };
+type CatalogPublicationChange = {
+  previous: CatalogPublication;
+  current: CatalogPublication;
+  staticCatalog: ModelCatalogSnapshot;
+};
 
 // Include route and runtime facts as well as logical rows; attempt status is not model metadata.
-function modelFacts(publication: CatalogPublication) {
+function modelFacts(publication: CatalogPublication, staticCatalog: ModelCatalogSnapshot) {
+  // Static rows are already visible before the first full acquisition completes.
+  const catalog = publication.catalog ?? staticCatalog;
   return [
-    publication.catalog?.entries,
-    publication.catalog?.routeVariants,
-    publication.catalog?.staticEntries,
+    catalog.entries,
+    catalog.routeVariants,
+    catalog.staticEntries,
     publication.runtimeModels,
     publication.configuredRuntimeModels,
   ];
@@ -46,7 +52,10 @@ export function notifyPreparedModelCatalogPublication(
     phase: "catalog-published",
     modelFactsChanged:
       change !== undefined &&
-      !isDeepStrictEqual(modelFacts(change.previous), modelFacts(change.current)),
+      !isDeepStrictEqual(
+        modelFacts(change.previous, change.staticCatalog),
+        modelFacts(change.current, change.staticCatalog),
+      ),
   });
 }
 

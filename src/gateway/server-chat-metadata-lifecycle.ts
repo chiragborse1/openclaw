@@ -24,6 +24,7 @@ export async function createGatewayChatMetadataLifecycle(params: {
   let context: GatewayRequestContext | undefined;
   let preparedModelRuntimeState: "unobserved" | "available" | "unavailable" = "unobserved";
   let preparedModelRuntimeEventVersion = 0;
+  let pendingCatalogStatusRefresh: ReturnType<typeof setImmediate> | undefined;
   const { ChatMetadataSnapshotUnavailableError, createGatewayChatMetadataRuntime } =
     await import("./server-methods/chat-metadata-runtime.js");
   const runtime = createGatewayChatMetadataRuntime({
@@ -55,7 +56,12 @@ export async function createGatewayChatMetadataLifecycle(params: {
     },
     log: params.log,
   });
+  const cancelCatalogStatusRefresh = () => {
+    clearImmediate(pendingCatalogStatusRefresh);
+    pendingCatalogStatusRefresh = undefined;
+  };
   const refreshLogged = () => {
+    cancelCatalogStatusRefresh();
     void runtime.refresh().catch((error: unknown) => {
       params.log.warn(`chat metadata refresh failed: ${String(error)}`);
     });
@@ -67,6 +73,11 @@ export async function createGatewayChatMetadataLifecycle(params: {
       // The metadata owner compares captured facts before fencing changed generations.
       // Unrelated workspace events and repeated catalog statuses must not discard its cache.
       refreshLogged();
+    }
+  };
+  const flushCatalogStatusRefresh = () => {
+    if (pendingCatalogStatusRefresh) {
+      refreshForSubordinateChange();
     }
   };
   const registerRefreshListeners = async (): Promise<(() => void) | undefined> => {
@@ -85,9 +96,19 @@ export async function createGatewayChatMetadataLifecycle(params: {
     const unregisterPreparedModelRuntimePublication =
       registerPreparedModelRuntimePublicationListener((event) => {
         if (event.phase === "catalog-published" || event.phase === "catalog-failed") {
-          refreshForSubordinateChange();
+          if (event.modelFactsChanged !== false) {
+            refreshForSubordinateChange();
+          } else if (preparedModelRuntimeState === "available" && !pendingCatalogStatusRefresh) {
+            // A fleet publishes status per agent; capture its final facts once per event-loop turn.
+            pendingCatalogStatusRefresh = setImmediate(() => {
+              pendingCatalogStatusRefresh = undefined;
+              refreshForSubordinateChange();
+            });
+            pendingCatalogStatusRefresh.unref();
+          }
           return;
         }
+        cancelCatalogStatusRefresh();
         preparedModelRuntimeEventVersion += 1;
         if (event.phase === "invalidated") {
           // Initial catch-up may already be building an owner published before attachment.
@@ -131,6 +152,7 @@ export async function createGatewayChatMetadataLifecycle(params: {
       // must join it before shutdown retires the config and model owners.
       publishSidecars({
         stop: async () => {
+          cancelCatalogStatusRefresh();
           unregister?.();
           await runtime.stop();
         },
@@ -161,8 +183,17 @@ export async function createGatewayChatMetadataLifecycle(params: {
         );
       }
     },
-    read: runtime.read,
-    readStartup: runtime.readStartup,
-    refresh: runtime.refresh,
+    read: (...args: Parameters<typeof runtime.read>) => {
+      flushCatalogStatusRefresh();
+      return runtime.read(...args);
+    },
+    readStartup: (...args: Parameters<typeof runtime.readStartup>) => {
+      flushCatalogStatusRefresh();
+      return runtime.readStartup(...args);
+    },
+    refresh: () => {
+      cancelCatalogStatusRefresh();
+      return runtime.refresh();
+    },
   };
 }

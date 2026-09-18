@@ -291,10 +291,13 @@ describe("prepared catalog source composition", () => {
           ? {
               preparedStaticProviderCatalog: {
                 ...generation.preparedStaticProviderCatalog,
-                entries: generation.preparedStaticProviderCatalog.entries.map((entry) => ({
-                  ...entry,
-                  result: { provider: { ...staticConfig, baseUrl: siblingEndpoint } },
-                })),
+                entries: generation.preparedStaticProviderCatalog.entries.map((entry) =>
+                  Object.assign({}, entry, {
+                    result: {
+                      provider: Object.assign({}, staticConfig, { baseUrl: siblingEndpoint }),
+                    },
+                  }),
+                ),
               },
             }
           : {}),

@@ -21,6 +21,7 @@ import {
   createSessionRowProjection,
   type SessionRowProjection,
 } from "../gateway/session-row-projection.js";
+import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { sessionChanges } from "../sessions/session-row-changes.js";
 import {
   createOpenClawTestState,
@@ -137,6 +138,51 @@ afterEach(async ({ task }) => {
 });
 
 describe("catalog publication session rows", () => {
+  it("reports unchanged static facts when an unselected native catalog finishes", async () => {
+    const loadModelCatalog = vi.fn(async () => []);
+    const registry = createEmptyPluginRegistry();
+    registry.agentHarnesses.push({
+      pluginId: "unselected-native",
+      source: "fixture",
+      harness: {
+        id: "unselected-native",
+        label: "Unselected native runtime",
+        supports: () => ({ supported: false }),
+        async runAttempt() {
+          throw new Error("catalog-only fixture");
+        },
+        loadModelCatalog,
+      },
+    });
+    mocks.loadAgentRuntimePluginRegistryHandle.mockReturnValue(registry);
+    mocks.authStorage.getAll.mockReturnValue({});
+    mocks.modelRegistry.getAll.mockReturnValue([model]);
+    const owner = await publishPreparedModelRuntimeSnapshot(
+      {
+        config: { agents: { defaults: { model: "custom/synthetic-model" } } },
+        agentDir: state.agentDir("default"),
+      },
+      { catalogMode: "static" },
+    );
+    const changes: (boolean | undefined)[] = [];
+    const unsubscribe = registerPreparedModelRuntimePublicationListener((event) => {
+      if (event.phase === "catalog-published") {
+        changes.push(event.modelFactsChanged);
+      }
+    });
+    try {
+      expect(owner.readFullModelCatalog?.()).toBeUndefined();
+      const completed = await owner.loadFullModelCatalog!({ changedOnly: true });
+      expect(completed.entries).toEqual(owner.modelCatalog.entries);
+      expect(owner.readFullModelCatalog?.()).toBe(completed);
+      expect(loadModelCatalog).not.toHaveBeenCalled();
+      expect(mocks.runPreparedModelCatalogWorker).not.toHaveBeenCalled();
+      expect(changes).toEqual([false, false]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("publishes attempt status without rebuilding unchanged resident rows", async () => {
     const { rows, list, refresh, initial } = await setup();
     const before = rows.materializedCount;

@@ -820,7 +820,7 @@ describe("gateway chat metadata lifecycle", () => {
   });
 
   it.each([true, false, undefined])(
-    "refreshes catalog status even when model facts changed is %s",
+    "coalesces catalog status bursts while retaining real-fact refreshes (changed: %s)",
     async (modelFactsChanged) => {
       const { lifecycle: pendingLifecycle, sidecarOwner } = createLifecycle(false);
       const lifecycle = await pendingLifecycle;
@@ -830,11 +830,85 @@ describe("gateway chat metadata lifecycle", () => {
       modelListener({ phase: "published" });
       await vi.waitFor(() => expect(mocks.refresh).toHaveBeenCalledTimes(2));
       mocks.invalidate.mockClear();
+      let status = 0;
+      const capturedStatuses: number[] = [];
+      mocks.refresh.mockImplementation(async () => {
+        capturedStatuses.push(status);
+      });
 
-      modelListener({ phase: "catalog-published", modelFactsChanged });
+      for (let update = 1; update <= 16; update++) {
+        status = update;
+        modelListener({ phase: "catalog-published", modelFactsChanged });
+      }
 
       expect(mocks.invalidate).not.toHaveBeenCalled();
-      await vi.waitFor(() => expect(mocks.refresh).toHaveBeenCalledTimes(3));
+      if (modelFactsChanged === false) {
+        expect(mocks.refresh).toHaveBeenCalledTimes(2);
+        await nextEventLoopTurn();
+        expect(mocks.refresh).toHaveBeenCalledTimes(3);
+      } else {
+        expect(mocks.refresh).toHaveBeenCalledTimes(18);
+      }
+      expect(capturedStatuses.at(-1)).toBe(16);
+      await sidecarOwner.stop();
+    },
+  );
+
+  it("flushes queued catalog status before serving a metadata read", async () => {
+    const { lifecycle: pendingLifecycle, sidecarOwner } = createLifecycle(false);
+    const lifecycle = await pendingLifecycle;
+    await lifecycle.attachContext(context, sidecarOwner.publish);
+    const events: string[] = [];
+    mocks.refresh.mockImplementation(async () => {
+      events.push("refresh");
+    });
+    mocks.read.mockImplementation(async () => {
+      events.push("read");
+    });
+    const modelListener = mocks.registerModelListener.mock.calls[0]![0];
+    modelListener({ phase: "catalog-published", modelFactsChanged: false });
+    modelListener({
+      phase: "catalog-failed",
+      modelFactsChanged: false,
+      error: new Error("failed"),
+    });
+    try {
+      await lifecycle.read({ agentId: "main" });
+      await nextEventLoopTurn();
+      expect(events).toEqual(["refresh", "read"]);
+      expect(mocks.refresh).toHaveBeenCalledTimes(2);
+    } finally {
+      await sidecarOwner.stop();
+    }
+  });
+
+  it.each(["changed", "invalidated", "failed", "stopped"] as const)(
+    "cancels queued catalog status when publication is %s",
+    async (outcome) => {
+      const { lifecycle: pendingLifecycle, sidecarOwner } = createLifecycle(false);
+      const lifecycle = await pendingLifecycle;
+      await lifecycle.attachContext(context, sidecarOwner.publish);
+      const modelListener = mocks.registerModelListener.mock.calls[0]![0];
+      modelListener({ phase: "catalog-published", modelFactsChanged: false });
+      try {
+        if (outcome === "stopped") {
+          await sidecarOwner.stop();
+        } else if (outcome === "changed") {
+          modelListener({ phase: "catalog-published", modelFactsChanged: true });
+          expect(mocks.refresh).toHaveBeenCalledTimes(2);
+        } else if (outcome === "invalidated") {
+          modelListener({ phase: "invalidated" });
+          expect(mocks.invalidate).toHaveBeenCalledOnce();
+        } else {
+          const failure = new Error("publication failed");
+          modelListener({ phase: "failed", error: failure });
+          expect(mocks.fail).toHaveBeenCalledExactlyOnceWith(failure);
+        }
+        await nextEventLoopTurn();
+        expect(mocks.refresh).toHaveBeenCalledTimes(outcome === "changed" ? 2 : 1);
+      } finally {
+        await sidecarOwner.stop();
+      }
     },
   );
 
