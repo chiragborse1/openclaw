@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { parseStrictPositiveInteger } from "@openclaw/normalization-core/number-coercion";
 import { theme } from "../../../packages/terminal-core/src/theme.js";
+import { resolveBrewOpenClawPath } from "../../infra/brew.js";
 import { hasErrnoCode } from "../../infra/errors.js";
 import { resolveRequiredHomeDir } from "../../infra/home-dir.js";
 import { resolveOpenClawPackageRoot } from "../../infra/openclaw-root.js";
@@ -26,11 +27,19 @@ import {
   detectGlobalInstallManagerForRoot,
   type GlobalInstallManager,
 } from "../../infra/update-global.js";
+import { createUpdatePreflightFailure } from "../../infra/update-preflight-details.js";
 import type { UpdateRequesterAuthority } from "../../infra/update-requester-authority.js";
 import type { UpdateRecoveryFence } from "../../infra/update-run-recovery.js";
 import { runStep } from "../../infra/update-runner-command.js";
-import { resolveUnmanagedUpdateInstallReason } from "../../infra/update-runner-install-surface.js";
-import type { UpdateStepProgress, UpdateStepResult } from "../../infra/update-runner.js";
+import {
+  describeUpdateInstallRoot,
+  resolveUnmanagedUpdateInstallReason,
+} from "../../infra/update-runner-install-surface.js";
+import type {
+  UpdateRunResult,
+  UpdateStepProgress,
+  UpdateStepResult,
+} from "../../infra/update-runner.js";
 import { runCommandWithTimeout } from "../../process/exec.js";
 import { defaultRuntime } from "../../runtime.js";
 import type { UpdateRecoveryStep } from "../../shared/update-outcome.js";
@@ -43,7 +52,10 @@ import { resolveNodeRunner } from "./node-runner.js";
 export { resolveNodeRunner } from "./node-runner.js";
 
 export type UpdateCommandOptions = {
-  /** In-process executor only; workers must reacquire authority, never deserialize this. */
+  /** Doctor's accepted source update targets dev without changing the saved channel. */
+  sourceUpdate?: { root: string };
+  /** In-process reporting only, after the update owner settles. Never serialized. */
+  onResult?: (result: UpdateRunResult) => void;
   /** Legacy live context is unsupported; its presence is refusal-only. */
   recovery?: unknown;
   reapplyLocalOverrides?: boolean;
@@ -439,11 +451,20 @@ export async function resolveGlobalManager(params: {
   installKind: "git" | "package" | "unknown";
   timeoutMs: number;
   pkgOwnership?: FreeBsdPkgOwnershipInspection;
+  serviceUnitTarget?: string;
 }): Promise<GlobalInstallManager> {
   await (
     params.pkgOwnership ?? createFreeBsdPkgOwnershipInspection(params.timeoutMs)
   ).assertUnowned(params.root);
-  if (params.installKind === "package") {
+  if (params.installKind !== "git") {
+    if (await resolveBrewOpenClawPath(params.root)) {
+      const reason = resolveUnmanagedUpdateInstallReason();
+      throw new UpdatePreMutationError(
+        reason,
+        "This OpenClaw installation is managed by Homebrew. To update OpenClaw, run:\n\n  brew upgrade openclaw-cli\n\nThen restart the gateway:\n\n  openclaw gateway restart",
+        { failureFacts: [] },
+      );
+    }
     const diagnostics: string[] = [];
     const detected = await detectGlobalInstallManagerForRoot(
       runCommandWithTimeout,
@@ -453,10 +474,13 @@ export async function resolveGlobalManager(params: {
     );
     if (!detected) {
       const reason = resolveUnmanagedUpdateInstallReason();
-      throw new UpdatePreMutationError(
-        reason,
-        `${UPDATE_INSTALL_SKIP_GUIDANCE[reason]} Inspected: ${diagnostics.join("; ")}.`,
+      const failure = createUpdatePreflightFailure(
+        "installation-unclassified",
+        `${await describeUpdateInstallRoot(params.root)} Service unit target: ${params.serviceUnitTarget ?? "not inspected"}. Inspected package-manager owners: ${diagnostics.join("; ")}. ${UPDATE_INSTALL_SKIP_GUIDANCE[reason]}`,
       );
+      throw new UpdatePreMutationError(reason, failure.message, {
+        failureFacts: failure.failureFacts,
+      });
     }
     return detected;
   }

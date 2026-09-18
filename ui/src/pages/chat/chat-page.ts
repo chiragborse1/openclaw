@@ -7,16 +7,13 @@ import { McpAppUnmountGate } from "../../components/mcp-app-unmount.ts";
 import { UI_COMMAND_EVENT, type UiCommandDetail } from "../../components/panel-toggle-contract.ts";
 import type { BoardFace } from "../../lib/board/settings.ts";
 import { readSessionDragData, sessionDragActive } from "../../lib/sessions/drag.ts";
-import {
-  resolveSessionPreferredFaceForKey,
-  sessionNavigationTarget,
-} from "../../lib/sessions/route-navigation.ts";
 import { areUiSessionKeysEquivalent } from "../../lib/sessions/session-key.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
 import { SubscriptionsController } from "../../lit/subscriptions-controller.ts";
 import { persistSessionBoardFace } from "./chat-board-face-persistence.ts";
-import { currentRouteLocation, stillOwnsCanonicalLocation } from "./chat-canonical-location.ts";
+import { stillOwnsCanonicalLocation } from "./chat-canonical-location.ts";
 import { resolveDropIndicator, type DropIndicator } from "./chat-page-drop-indicator.ts";
+import { navigateChatPage } from "./chat-page-navigation.ts";
 import {
   renderPendingChatPage,
   renderChatPageBody,
@@ -75,15 +72,6 @@ export class ChatPage extends OpenClawLightDomElement implements SessionSplitHos
     );
   }
 
-  private readonly subscriptions = new SubscriptionsController(this)
-    .watch(
-      () => this.context?.sessions,
-      (sessions, notify) => sessions.subscribe(notify),
-    )
-    .watch(
-      () => this.context?.chatSubmissions,
-      (submissions, notify) => submissions.subscribeCreate(notify),
-    );
   private mediaQuery: MediaQueryList | null = null;
   private mobileNavMediaQuery: MediaQueryList | null = null;
   private dragDepth = 0;
@@ -121,6 +109,17 @@ export class ChatPage extends OpenClawLightDomElement implements SessionSplitHos
 
   constructor() {
     super();
+    new SubscriptionsController(this)
+      .watch(
+        () => this.context?.sessions,
+        (sessions, notify) => sessions.subscribe(notify),
+        undefined,
+        () => this.performUpdate(),
+      )
+      .watch(
+        () => this.context?.chatSubmissions,
+        (submissions, notify) => submissions.subscribeCreate(notify),
+      );
     installSessionPrefetch(this, this.messageCache, this.snapshotStore, () => this.context);
   }
 
@@ -156,7 +155,6 @@ export class ChatPage extends OpenClawLightDomElement implements SessionSplitHos
     this.snapshotStore.disconnect();
     this.retainedSessions.disconnect();
     this.viewerPresence.dispose();
-    this.subscriptions.clear();
     this.mediaQuery?.removeEventListener("change", this.handleViewportChange);
     this.mediaQuery = null;
     this.mobileNavMediaQuery?.removeEventListener("change", this.handleMobileNavViewportChange);
@@ -381,17 +379,13 @@ export class ChatPage extends OpenClawLightDomElement implements SessionSplitHos
 
   private readonly clearDropIndicator = () => {
     this.dragDepth = 0;
-    this.clearDropPreview();
-  };
-
-  private clearDropPreview() {
     this.pendingDragOver = null;
     if (this.dragFrame) {
       window.cancelAnimationFrame(this.dragFrame);
       this.dragFrame = 0;
     }
     this.dropIndicator = null;
-  }
+  };
 
   private syncRouteToActivePane() {
     const layout = this.layout;
@@ -424,28 +418,9 @@ export class ChatPage extends OpenClawLightDomElement implements SessionSplitHos
   }
 
   private updateRoute(sessionKey: string, replace = false, explicitFace?: BoardFace) {
-    if (!this.presented) {
-      return;
+    if (this.presented) {
+      navigateChatPage(this.context, this.data, sessionKey, replace, explicitFace);
     }
-    const data = this.data;
-    const sameSession = data && areUiSessionKeysEquivalent(data.sessionKey, sessionKey);
-    let face = explicitFace ?? data?.face ?? "chat";
-    if (explicitFace === undefined && !sameSession) {
-      face = resolveSessionPreferredFaceForKey(this.context, sessionKey, data?.agentId);
-    }
-    const options = sessionNavigationTarget({
-      context: this.context,
-      face,
-      preferenceDerivedFace: explicitFace === undefined && !sameSession,
-      sessionKey,
-      agentId: data?.agentId,
-      shortIdLength: data?.sessionKey === sessionKey ? data.shortId?.length : undefined,
-    }).options;
-    const location =
-      replace && sameSession && (data.draft || data.focusComposer)
-        ? locationWithoutDraft(currentRouteLocation(), options)
-        : options;
-    this.context[replace ? "replace" : "navigate"](face, location);
   }
 
   private applySessionDrop(sessionKey: string, paneId: string, zone: SplitDropZone): void {

@@ -2544,6 +2544,10 @@ describe("scripts/test-projects changed-target routing", () => {
       "src/plugins/doctor-contract-registry.load-paths.test.ts",
     ],
     ["test/vitest/vitest.plugin-sdk.config.ts", "src/plugin-sdk/provider-auth.test.ts"],
+    [
+      "test/vitest/vitest.unit-fast.config.ts",
+      "src/agents/embedded-agent-runner/run/model-setup.selected-model.test.ts",
+    ],
   ])("preserves whole-owner watch coverage for %s with %s", (config, file) => {
     const [plan] = buildVitestRunPlans(["--watch", config, file]);
     expect(plan).toMatchObject({
@@ -2686,21 +2690,43 @@ describe("scripts/test-projects changed-target routing", () => {
   });
 
   it.each([
-    [
-      "src/agents/embedded-agent-runner/run",
-      "test/vitest/vitest.agents-embedded-agent-run.config.ts",
-    ],
-    ["src/agents/runtime-plan", "test/vitest/vitest.agents-support.config.ts"],
-  ])("routes focused agent directory %s to its owning shard", (directory, config) => {
-    expect(buildVitestRunPlans([directory])).toEqual([
-      {
-        config,
-        forwardedArgs: [directory],
-        includePatterns: null,
-        watchMode: false,
-      },
-    ]);
-  });
+    {
+      directory: "src/agents/embedded-agent-runner/run",
+      config: "test/vitest/vitest.agents-embedded-agent-run.config.ts",
+      workerFiles: [
+        "src/agents/embedded-agent-runner/run/model-setup.ownership.test.ts",
+        "src/agents/embedded-agent-runner/run/model-setup.selected-model.test.ts",
+        "src/agents/embedded-agent-runner/run/runtime-preparation.thinking.test.ts",
+      ],
+    },
+    {
+      directory: "src/agents/runtime-plan",
+      config: "test/vitest/vitest.agents-support.config.ts",
+      workerFiles: [],
+    },
+  ])(
+    "routes focused agent directory $directory across its owners",
+    ({ directory, config, workerFiles }) => {
+      expect(buildVitestRunPlans([directory])).toEqual([
+        ...(workerFiles.length > 0
+          ? [
+              {
+                config: "test/vitest/vitest.infra.config.ts",
+                forwardedArgs: [],
+                includePatterns: workerFiles,
+                watchMode: false,
+              },
+            ]
+          : []),
+        {
+          config,
+          forwardedArgs: [directory],
+          includePatterns: null,
+          watchMode: false,
+        },
+      ]);
+    },
+  );
 
   it("splits the focused agent tools directory across its worker and tools owners", () => {
     expect(buildVitestRunPlans(["src/agents/tools"])).toEqual([
@@ -2722,12 +2748,22 @@ describe("scripts/test-projects changed-target routing", () => {
     ]);
   });
 
-  it("keeps shuffle options on the single owning embedded-run shard", () => {
+  it("keeps shuffle options on both embedded-run owners", () => {
     const directory = "src/agents/embedded-agent-runner/run";
 
     expect(
       buildVitestRunPlans([directory, "--", "--sequence.shuffle", "--sequence.seed", "3"]),
     ).toEqual([
+      {
+        config: "test/vitest/vitest.infra.config.ts",
+        forwardedArgs: ["--sequence.shuffle", "--sequence.seed", "3"],
+        includePatterns: [
+          "src/agents/embedded-agent-runner/run/model-setup.ownership.test.ts",
+          "src/agents/embedded-agent-runner/run/model-setup.selected-model.test.ts",
+          "src/agents/embedded-agent-runner/run/runtime-preparation.thinking.test.ts",
+        ],
+        watchMode: false,
+      },
       {
         config: "test/vitest/vitest.agents-embedded-agent-run.config.ts",
         forwardedArgs: ["--sequence.shuffle", "--sequence.seed", "3", directory],
@@ -6017,10 +6053,6 @@ describe("scripts/test-projects channel contract lane patterns", () => {
 });
 
 it.each([
-  ".github/workflows/openclaw-performance.yml",
-  "test/scripts/openclaw-performance-workflow.test.ts",
-  "test/scripts/openclaw-performance-workflow.test-support.ts",
-  "test/scripts/openclaw-performance-git-lifecycle.test.ts",
   "test/scripts/plugin-release-git-lifecycle.test.ts",
   "test/scripts/release-workflow-git-lifecycle.test.ts",
   ".github/workflows/plugin-clawhub-release.yml",
@@ -6029,15 +6061,10 @@ it.each([
   ".github/actions/publish-generated-pr/policy.py",
   ".github/workflows/maturity-scorecard.yml",
   "test/scripts/generated-publisher.test-support.ts",
-  "test/scripts/ci-git-owner.test-support.ts",
   "test/scripts/ci-checkout.test-support.ts",
   "test/scripts/ci-git-owner.test.ts",
   "test/scripts/ci-linux-git.test.ts",
   "test/scripts/ci-platform-checkout.test.ts",
-  "test/scripts/fixtures/ci-platform-checkout.mjs",
-  "test/scripts/ci-windows-process-census.test-support.ts",
-  "test/scripts/fixtures/ci-windows-process-census.mjs",
-  "test/scripts/fixtures/ci-windows-process-census.py",
 ])("routes shared Git ownership through all native tooling lanes: %s", (changedPath) => {
   const plan = resolveChangedTestTargetPlan([changedPath]);
   expect(plan.mode).toBe("targets");
@@ -6049,9 +6076,6 @@ it.each([
       "test/scripts/ci-workflow-guards.test.ts",
     ]),
   );
-  expect(
-    buildVitestRunPlans(["test/scripts/ci-git-owner.test.ts"]).map(({ config }) => config),
-  ).toEqual(["test/vitest/vitest.tooling.config.ts"]);
 });
 
 // Workflow policy and shared fixture changes must select both semantic and process proof.
@@ -6066,7 +6090,9 @@ it.each([
   "test/scripts/fixtures/ci-windows-process-census.mjs",
   "test/scripts/fixtures/ci-windows-process-census.py",
 ])("routes Performance lifecycle ownership: %s", (changedPath) => {
-  expect(resolveChangedTestTargetPlan([changedPath]).targets).toEqual(
+  const plan = resolveChangedTestTargetPlan([changedPath]);
+  expect(plan.mode).toBe("targets");
+  expect(plan.targets).toEqual(
     expect.arrayContaining([
       "test/scripts/ci-git-owner.test.ts",
       "test/scripts/ci-linux-git.test.ts",

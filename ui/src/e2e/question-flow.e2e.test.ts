@@ -595,7 +595,11 @@ suite.define(() => {
     await expect
       .poll(() => composer.evaluate((element) => document.activeElement === element))
       .toBe(true);
+    await summary.scrollIntoViewIfNeeded();
     await screenshot(page, "02-question-answered.png");
+    expect(
+      await summary.getByText(request.questions[0]!.question, { exact: true }).isVisible(),
+    ).toBe(true);
   });
 
   it("masks a store-bound secret and resolves it with edited hosts without echoing the value", async () => {

@@ -4741,6 +4741,8 @@ export const en: TranslationMap & {
       skippedCount: "{count} skipped",
       running: "Running",
       completed: "Completed",
+      blocked: "Blocked",
+      outcomeUnknown: "Outcome unknown",
       exitCode: "Exit code {code}",
       failureCount: "{count} failed",
       noOutputFailed: "No output — tool failed.",

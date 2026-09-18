@@ -39,7 +39,6 @@ import { maybeHandleQueueDirective } from "./directive-handling.queue-validation
 import {
   acknowledgeIgnoredSessionDirective,
   applySessionDirectiveFields,
-  buildDirectiveAcknowledgement,
   canPersistSessionDirectiveDefaults,
   DIRECTIVE_ACK_MESSAGES,
   type IgnoredSessionDirectiveFlag,
@@ -714,5 +713,6 @@ export async function handleDirectiveOnly(
       contextKey: `fast:${formatFastModeValue(nextFastMode)}`,
     });
   }
-  return buildDirectiveAcknowledgement(parts, directives.hasStatusDirective);
+  const ack = parts.join(" ").trim();
+  return !ack && directives.hasStatusDirective ? undefined : { text: ack || "OK." };
 }
