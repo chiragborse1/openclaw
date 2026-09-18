@@ -110,23 +110,30 @@ export function interceptCompilerBuild(directory: string, source: string): strin
   const fixtureModules = {
     "scripts/lib/vitest-worker-build-entries.mts": `
 export const vitestWorkerBuildEntries = {
-  "infra/sqlite-readonly-location.worker": "src/infra/sqlite-readonly-location.worker.ts",
+  "infra/sqlite-readonly-location.worker": original.vitestWorkerBuildEntries["infra/sqlite-readonly-location.worker"],
 };
-export const legacyFinalizerBuildSources = ["src/infra/runtime-process-entrypoints.ts"];
+export const legacyFinalizerBuildSources = original.legacyFinalizerBuildSources.filter(
+  source => source === "src/infra/runtime-process-entrypoints.ts",
+);
 `,
     "scripts/lib/vitest-worker-declarations.mts": `
-export const runtimeProcessDeclarationEntries = {
-  "infra/runtime-process-entrypoints": "src/infra/runtime-process-entrypoints.ts",
+export const vitestWorkerDeclarationEntries = {
+  "infra/runtime-process-entrypoints": original.vitestWorkerDeclarationEntries["infra/runtime-process-entrypoints"],
 };
-export const vitestWorkerDeclarationEntries = runtimeProcessDeclarationEntries;
 `,
   };
   const replacements = Object.fromEntries(
-    Object.entries(fixtureModules).map(([filename, contents]) => [
-      pathToFileURL(path.join(root, filename)).href,
-      pathToFileURL(writeFixture(directory, `${path.basename(filename, ".mts")}.mjs`, contents))
-        .href,
-    ]),
+    Object.entries(fixtureModules).map(([filename, contents]) => {
+      const canonical = pathToFileURL(path.join(root, filename)).href;
+      // Bypass this exact-URL replacement while retaining the owner's complete namespace.
+      const original = JSON.stringify(`${canonical}?fixture-original`);
+      const fixture = writeFixture(
+        directory,
+        `${path.basename(filename, ".mts")}.mjs`,
+        `export * from ${original};\nimport * as original from ${original};\n${contents}`,
+      );
+      return [canonical, pathToFileURL(fixture).href];
+    }),
   );
   // Sync require hooks still use the CJS filesystem loader; a resolve-only data URL is not loadable.
   const wrapper = writeFixture(
