@@ -359,8 +359,8 @@ describe("runCodexSettledTurnFinalization", () => {
     },
   );
 
-  it.each([" ", "NO_REPLY"])(
-    "returns completed-empty output with native attribution for %j without transcript mutation",
+  it.each([" ", "NO_REPLY", " NO_REPLY\n", "no_reply"])(
+    "preserves non-visible output with native attribution for %j without transcript mutation",
     async (text) => {
       mocks.runBounded.mockResolvedValue({ ...boundedResult(), text });
 
@@ -373,7 +373,7 @@ describe("runCodexSettledTurnFinalization", () => {
         assistant: {
           provider: "openai",
           model: "synthetic-summary-model",
-          content: [{ type: "text", text: "" }],
+          content: [{ type: "text", text: text.trim() }],
         },
       });
       expect(mocks.runBounded).toHaveBeenCalledOnce();
