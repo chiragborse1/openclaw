@@ -44,6 +44,7 @@ import {
   type ImageRenderOptions,
 } from "./chat-message-media.ts";
 import { renderMessageVideoPreview } from "./chat-message-video-preview.ts";
+import { isSentPastedTextAttachment } from "./chat-pasted-text.ts";
 import { isSentCommentAttachment } from "./chat-sent-comments.ts";
 import type { AttachmentSidebarState } from "./chat-sidebar-content-types.ts";
 import type { SidebarContent } from "./chat-sidebar.ts";
@@ -432,7 +433,10 @@ export function renderAssistantAttachments(
       ),
     };
   });
-  return html`<div class="chat-assistant-attachments">
+  const onlyPreviewChips = !inlinePlayback && files.every(isSentPastedTextAttachment);
+  return html`<div
+    class="chat-assistant-attachments ${onlyPreviewChips ? "chat-assistant-attachments--preview-chips" : ""}"
+  >
     ${
       comments.length
         ? html`<openclaw-chat-sent-comments
@@ -471,6 +475,23 @@ export function renderMessageAttachment(
     });
   }
   const { attachment } = item;
+  if (presentation === "card" && isSentPastedTextAttachment(item)) {
+    const resolved = resolveAttachmentSource(attachment, options);
+    const src = resolved.status === "available" ? resolved.source.src : undefined;
+    const readable =
+      src &&
+      (/^data:text\/plain;base64,[a-z0-9+/]*={0,2}$/i.test(src) ||
+        (safeAttachmentHref(src) && !isCrossOriginHttpSource(src)));
+    return html`<openclaw-chat-pasted-text
+      .src=${readable ? src : undefined}
+      .downloadHref=${readable ? src : src ? safeAttachmentHref(src) : undefined}
+      .fileName=${attachment.label}
+      .onRetry=${resolved.status === "unavailable" ? resolved.onRetry : undefined}
+      .sizeBytes=${resolved.status === "available" ? resolved.source.sizeBytes : attachment.sizeBytes}
+      .pending=${resolved.status === "checking"}
+      .scope=${JSON.stringify([attachment.url, options.sessionKey, options.agentId, options.connectionEpoch, options.resourceBasePath, options.authToken, options.policyKey])}
+    ></openclaw-chat-pasted-text>`;
+  }
   const normalizedMimeType = attachment.mimeType?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
   const inferTypeFromExtension =
     !normalizedMimeType || normalizedMimeType === "application/octet-stream";

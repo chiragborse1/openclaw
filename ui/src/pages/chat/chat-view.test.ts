@@ -6361,6 +6361,7 @@ describe("chat attachment picker", () => {
         id: "ordinary-text-file",
         fileName: "pasted-text-1.txt",
         mimeType: "text/plain",
+        origin: "file",
         sizeBytes: 4,
       },
       dataUrl: `data:text/plain;base64,${btoa("file")}`,
@@ -6390,7 +6391,7 @@ describe("chat attachment picker", () => {
     );
   });
 
-  it("shows a cached short preview for pasted text", () => {
+  it("shows a labeled pasted text chip with the text-field action", async () => {
     let attachments: ChatAttachment[] = [];
     let container = renderAttachmentHarness(
       () => attachments,
@@ -6402,16 +6403,20 @@ describe("chat attachment picker", () => {
     const text = `First words from a long pasted note ${"x".repeat(1100)}`;
     textarea.dispatchEvent(createPasteEvent(text));
     container = renderChatView({ attachments });
+    document.body.append(container);
 
-    expect(container.querySelector(".chat-attachment-file__name")?.textContent).toContain(
-      "First words from a l...",
-    );
+    await waitForFast(() => {
+      expect(container.querySelector(".chat-selection-annotations__chip")?.textContent).toContain(
+        "Pasted text",
+      );
+    });
+    expect(attachments[0]?.origin).toBe("paste");
     expect(container.querySelector(".chat-attachment-text-action")?.textContent?.trim()).toBe(
       "Show in text field",
     );
   });
 
-  it("preserves pasted-text presentation and restore behavior across handoff", () => {
+  it("preserves pasted-text presentation and restore behavior across handoff", async () => {
     let attachments: ChatAttachment[] = [];
     const producer = renderAttachmentHarness(
       () => attachments,
@@ -6452,36 +6457,22 @@ describe("chat attachment picker", () => {
       onAttachmentsChange,
       onDraftChange,
     });
-    expect(remounted.querySelector(".chat-attachment-file__name")?.textContent).toContain(
-      "First words from a r...",
-    );
+    document.body.append(remounted);
+    await waitForFast(() => {
+      expect(remounted.querySelector(".chat-selection-annotations__chip")?.textContent).toContain(
+        "Pasted text",
+      );
+    });
+    expect(attachments[0]?.origin).toBe("paste");
     requireElement(
       remounted,
-      '[aria-label="Show in text field"]',
+      ".chat-attachment-text-action",
       "show pasted text button",
     ).dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     expect(onAttachmentsChange).toHaveBeenCalledWith([]);
     expect(onDraftChange).toHaveBeenCalledWith(`intro\n\n${pastedText}`);
     expect(getChatAttachmentDataUrl(original)).toBeNull();
-  });
-
-  it("keeps large paste previews UTF-16 well-formed at the display boundary", () => {
-    let attachments: ChatAttachment[] = [];
-    let container = renderAttachmentHarness(
-      () => attachments,
-      (next) => {
-        attachments = next;
-      },
-    );
-    const textarea = getComposerTextarea(container);
-    const text = `${"a".repeat(19)}🦞${"x".repeat(1100)}`;
-    textarea.dispatchEvent(createPasteEvent(text));
-    container = renderChatView({ attachments });
-
-    expect(container.querySelector(".chat-attachment-file__name")?.textContent).toBe(
-      `${"a".repeat(19)}...`,
-    );
   });
 
   it("keeps normal short plain-text paste in the textarea", () => {
@@ -6520,9 +6511,13 @@ describe("chat attachment picker", () => {
       }),
       'renderChatView({ attachments: [attachment], draft: "intro", getDraft:... test invariant',
     );
+    document.body.append(preview);
+    await waitForFast(() => {
+      expect(preview.querySelector(".chat-attachment-text-action")).not.toBeNull();
+    });
     const showInTextFieldButton = requireElement(
       preview,
-      '[aria-label="Show in text field"]',
+      ".chat-attachment-text-action",
       "show pasted text in text field button",
     ) as HTMLButtonElement;
 

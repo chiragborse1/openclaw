@@ -1,5 +1,4 @@
 import { readSessionMessageIdentity } from "@openclaw/gateway-client/browser";
-import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { html, nothing, type TemplateResult } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
@@ -11,11 +10,7 @@ import { toSanitizedMarkdownHtml } from "../../../components/markdown.ts";
 import { t } from "../../../i18n/index.ts";
 import { registerChatMessageMetadataEnglish } from "../../../i18n/locales/en-chat-message-metadata.ts";
 import type { BoardProvider } from "../../../lib/board/provider.ts";
-import type {
-  MessageContentItem,
-  NormalizedMessage,
-  ToolCard,
-} from "../../../lib/chat/chat-types.ts";
+import type { MessageContentItem, ToolCard } from "../../../lib/chat/chat-types.ts";
 import { resolveMessageDisplayMarkdown } from "../../../lib/chat/message-display.ts";
 import "../../../components/person-reference.ts";
 import { extractThinkingCached } from "../../../lib/chat/message-extract.ts";
@@ -33,7 +28,6 @@ import {
 import { type EmbedSandboxMode, resolveToolDisplay } from "../../../lib/chat/tool-display.ts";
 import { isPendingSendMessage } from "../chat-thread-items.ts";
 import type { PluginToolIcons } from "../chat-tool-icon-controller.ts";
-import "../../../styles/chat/reply-preview.css";
 import "./chat-clawhub-card.ts";
 import type { LinkFaviconFetcher } from "../link-favicon-loader.ts";
 import { workspaceResultConflictFromTranscript } from "../workspace-conflict.ts";
@@ -61,6 +55,8 @@ import {
   renderMessageMarkdown,
   type AssistantMessageDisclosure,
 } from "./chat-message-text.ts";
+import { isSentPastedTextAttachment } from "./chat-pasted-text.ts";
+import { renderReplyPreview, type ReplyPreview } from "./chat-reply-preview-render.ts";
 import { isSentCommentAttachment } from "./chat-sent-comments.ts";
 import type { SidebarContent } from "./chat-sidebar.ts";
 import {
@@ -119,75 +115,6 @@ function renderInlineToolCards(
             : () => undefined,
         });
       })}
-    </div>
-  `;
-}
-
-type ReplyPreview = {
-  sourceMessageId?: string;
-  senderLabel?: string | null;
-  text: string;
-};
-
-function renderReplyPreview(
-  replyTarget: NormalizedMessage["replyTarget"],
-  preview: ReplyPreview | undefined,
-  onOpenReply: ((replyToId: string) => void) | undefined,
-  onResolveReply: ((replyToId: string) => void) | undefined,
-  navigationLoading: boolean,
-) {
-  if (!replyTarget) {
-    return nothing;
-  }
-  const replyToId = replyTarget.kind === "id" ? replyTarget.id : null;
-  const name = preview?.senderLabel?.trim()
-    ? preview.senderLabel
-    : replyTarget.kind === "current"
-      ? t("chat.messages.currentMessage")
-      : t("chat.messages.message");
-  const content = preview?.text.trim() ?? "";
-  const resolveMissingPreview = (element?: Element) => {
-    if (element && replyToId && !preview) {
-      onResolveReply?.(replyToId);
-    }
-  };
-  const body = html`
-    <span class="chat-reply-preview__icon"
-      >${
-        navigationLoading
-          ? html`<span class="session-run-spinner" aria-hidden="true"></span>`
-          : icons.messageSquare
-      }</span
-    >
-    <span class="chat-reply-preview__label"> ${t("chat.messages.replyingTo", { name })} </span>
-    ${
-      content
-        ? html`<span class="chat-reply-preview__text"
-            >${truncateUtf16Safe(content, 120)}${content.length > 120 ? "..." : ""}</span
-          >`
-        : nothing
-    }
-  `;
-  if (replyToId && onOpenReply) {
-    return html`
-      <button
-        ${ref(resolveMissingPreview)}
-        type="button"
-        class="chat-reply-preview chat-reply-preview--message"
-        ?disabled=${navigationLoading}
-        aria-busy=${navigationLoading ? "true" : "false"}
-        @click=${() => onOpenReply(replyToId)}
-      >
-        ${body}
-      </button>
-    `;
-  }
-  return html`
-    <div
-      ${ref(resolveMissingPreview)}
-      class="chat-reply-preview chat-reply-preview--message chat-reply-preview--unavailable"
-    >
-      ${body}
     </div>
   `;
 }
@@ -316,7 +243,10 @@ export function renderGroupedMessage(
   const hasUserFiles =
     normalizedRole === "user" &&
     cardAttachments.some(
-      (item) => item.attachment.kind === "document" && !isSentCommentAttachment(item),
+      (item) =>
+        item.attachment.kind === "document" &&
+        !isSentCommentAttachment(item) &&
+        !isSentPastedTextAttachment(item),
     );
   const imageRenderOptions = {
     sessionKey: opts.sessionKey,
@@ -362,9 +292,24 @@ export function renderGroupedMessage(
   // Detect pure-JSON messages and render as collapsible block
   const jsonResult = markdown && !opts.isStreaming ? detectJson(markdown) : null;
 
+  const onlyPreviewChips =
+    normalizedRole === "user" &&
+    !markdown &&
+    !normalizedMessage.replyTarget &&
+    !hasImages &&
+    !hasToolCards &&
+    omittedMedia.length === 0 &&
+    expiredPairingQrCount === 0 &&
+    visibleAttachments.length > 0 &&
+    visibleAttachments.every(
+      (item) => isSentCommentAttachment(item) || isSentPastedTextAttachment(item),
+    );
+  const transparentShell =
+    hasImages || videoPreviews.length > 0 || hasUserFiles || onlyPreviewChips;
   const bubbleClasses = [
     "chat-bubble",
-    hasImages || videoPreviews.length > 0 || hasUserFiles ? "chat-bubble--with-images" : "",
+    transparentShell ? "chat-bubble--with-images" : "",
+    onlyPreviewChips ? "chat-bubble--preview-chips-only" : "",
     hasUserFiles ? "chat-bubble--with-files" : "",
     isToolShell ? "chat-bubble--tool-shell" : "",
     opts.isStreaming ? "streaming" : "",
@@ -548,7 +493,21 @@ export function renderGroupedMessage(
       { ...prepared.media, text: bodyMarkdown ?? "" },
     );
   };
-  const renderMessageContent = () => (renderInOrder ? renderOrderedContent() : renderText());
+  const textPreviewAttachments =
+    normalizedRole === "user" && markdown && (hasImages || videoPreviews.length > 0 || hasUserFiles)
+      ? cardAttachments.filter(
+          (item) => isSentCommentAttachment(item) || isSentPastedTextAttachment(item),
+        )
+      : [];
+  const renderMessageContent = () =>
+    textPreviewAttachments.length
+      ? html`<div class="chat-message-preview-body">
+          ${renderAssistantAttachments(textPreviewAttachments, imageRenderOptions, onOpenSidebar, opts.onAssistantAttachmentLoaded, false)}
+          ${renderText()}
+        </div>`
+      : renderInOrder
+        ? renderOrderedContent()
+        : renderText();
   // Collapsed tool results must not load attachments or render hidden markdown.
   // Retained panes use opacity, so hidden transcripts must unmount video previews.
   const renderBody = () => html`
@@ -576,7 +535,11 @@ export function renderGroupedMessage(
     )}
     ${renderOmittedMedia(omittedMedia)}
     ${renderAssistantAttachments(
-      renderInOrder ? supplementalAttachments : cardAttachments,
+      renderInOrder
+        ? supplementalAttachments
+        : cardAttachments.filter(
+            (item) => item.type !== "attachment" || !textPreviewAttachments.includes(item),
+          ),
       imageRenderOptions,
       onOpenSidebar,
       opts.onAssistantAttachmentLoaded,

@@ -604,6 +604,11 @@
   gap: var(--chat-block-gap);
 }
 
+.chat-assistant-attachments--preview-chips {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
 .chat-group.user .chat-bubble--with-files {
   width: 100%;
 }

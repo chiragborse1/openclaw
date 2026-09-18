@@ -190,3 +190,19 @@ openclaw-chat-comment-pins {
   inset-inline-end: 0;
   display: flex;
 }
+
+.chat-pasted-text__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-block-end: 8px;
+}
+
+.chat-pasted-text__content {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

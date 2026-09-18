@@ -357,6 +357,12 @@ describe("openclaw-tooltip", () => {
     vi.advanceTimersByTime(500);
     expectOpenCount(1);
 
+    hoverTrigger(action.trigger);
+    vi.advanceTimersByTime(500);
+    expect(webAwesomeTooltip(reveal.tooltip)?.open).toBe(true);
+    expect(webAwesomeTooltip(action.tooltip)?.open).toBe(false);
+    dispatchMousePointer(action.trigger, "pointerleave");
+
     dispatchMousePointer(reveal.trigger, "pointerdown");
     reveal.trigger.click();
     expectOpenCount(0);

@@ -4674,6 +4674,10 @@ export const en: TranslationMap & {
       readFailed: "Could not attach: {names}{more}",
       tooLarge: "Too large to send: {names}{more}",
       showInTextField: "Show in text field",
+      pastedText: "Pasted text",
+      downloadPastedText: "Download text",
+      pastedTextUnavailable:
+        "Could not preview this text. Text previews require UTF-8 content up to 256 KiB.",
       outsideAllowedFolders: "Outside allowed folders",
       unavailable: "Unavailable",
       failureDeliveryFailed: "Delivery failed. Try sending this file again.",

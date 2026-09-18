@@ -35,6 +35,7 @@ export function buildChatApiAttachments(attachments?: readonly ChatAttachment[])
           type: parsed.mimeType.startsWith("image/") ? "image" : "file",
           mimeType: parsed.mimeType,
           fileName: attachment.fileName,
+          ...(attachment.origin ? { origin: attachment.origin } : {}),
           content: parsed.content,
         };
       })
@@ -64,6 +65,9 @@ export function restoreChatApiAttachments(attachments?: readonly unknown[]): Cha
         id: generateUUID(),
         dataUrl: `data:${mimeType};base64,${content}`,
         mimeType,
+        ...(attachment.origin === "paste" || attachment.origin === "file"
+          ? { origin: attachment.origin }
+          : {}),
         fileName: typeof attachment.fileName === "string" ? attachment.fileName : undefined,
       },
     ];

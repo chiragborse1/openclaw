@@ -370,7 +370,7 @@ class Tooltip extends OpenClawLitElement {
     if (event.pointerType !== "touch") {
       this.#contentHovered = true;
       this.clearCloseTimer();
-      this.show();
+      this.show("hover");
     }
   };
 
@@ -437,11 +437,11 @@ class Tooltip extends OpenClawLitElement {
         : Math.max(0, this.delay ?? provider?.delay ?? HOVER_DELAY);
     this.#openTimer = window.setTimeout(() => {
       this.#openTimer = null;
-      this.show();
+      this.show("hover");
     }, delay);
   }
 
-  private show() {
+  private show(intent: "hover" | "activation" = "activation") {
     const tooltip = this.webAwesomeTooltip;
     if (
       this.disabled ||
@@ -455,6 +455,10 @@ class Tooltip extends OpenClawLitElement {
     this.#clearTimers(false);
     const active = Tooltip.activeByDocument.get(this.ownerDocument);
     if (active && active !== this) {
+      // Repositioning can cross a stationary pointer without a new activation.
+      if (intent === "hover" && active.#pinned) {
+        return;
+      }
       active.close();
     }
     // Portaled menus and modal roots can sit outside the provider. The document
