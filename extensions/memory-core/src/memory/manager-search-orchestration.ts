@@ -28,7 +28,7 @@ import { acquireMemoryIndexReadGeneration } from "./manager-index-generation-lea
 import { MemoryKeywordRetrieval, type KeywordSearchHit } from "./manager-keyword-retrieval.js";
 import { runVectorKnnInSubprocess } from "./manager-search-knn-subprocess.js";
 import { resolveMemorySearchPreflight } from "./manager-search-preflight.js";
-import { resolveExactPathSpecificity, searchVector } from "./manager-search.js";
+import { prepareExactPathMatcher, searchVector } from "./manager-search.js";
 import { applyProjectRanking } from "./project-ranking.js";
 import { applyTemporalDecayToHybridResults } from "./temporal-decay.js";
 
@@ -591,6 +591,7 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
     temporalDecay?: { enabled: boolean; halfLifeDays: number };
     activeProjectKeys?: readonly string[];
   }): Promise<HybridSearchResult<MemorySource>[]> {
+    const matchExactPath = prepareExactPathMatcher(params.query);
     return mergeHybridResults({
       vector: params.vector.map((r) => ({
         id: r.id,
@@ -603,7 +604,7 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
         importance: r.importance,
         triggers: r.triggers,
         projectKey: r.projectKey,
-        exactPathSpecificity: resolveExactPathSpecificity(params.query, r.path),
+        exactPathSpecificity: matchExactPath(r.path),
         ...(r.provenance ? { provenance: r.provenance } : {}),
       })),
       keyword: params.keyword.map((r) => ({

@@ -103,14 +103,22 @@ export function forkControl(
   connectionFingerprint = "fingerprint",
 ) {
   const archiveThread = vi.fn(async () => undefined);
+  const retireConnection = vi.fn();
   const control = {
     archiveThread,
+    retireConnection,
     clientId: "client-pinned",
     connectionFingerprint,
     forkThread,
   } as unknown as CodexSessionCatalogControl;
   control.withPinnedConnection = async (run) => await run(control);
-  return { archiveThread, control, controlFactory: factoryForControl(control), forkThread };
+  return {
+    archiveThread,
+    control,
+    controlFactory: factoryForControl(control),
+    forkThread,
+    retireConnection,
+  };
 }
 
 export function createForkTestRuntime(

@@ -115,7 +115,8 @@ describe.each(["sync", "async", "scoped"] as const)("SQLite child compile cache 
       if (mode === "sync") {
         expect(fs.readFileSync(prepared.location)).toEqual(before);
       }
-      const snapshot = new (requireNodeSqlite().DatabaseSync)(prepared.location, {
+      const { openNodeSqliteDatabase } = await import("./node-sqlite.js");
+      const snapshot = openNodeSqliteDatabase(prepared.location, {
         readOnly: true,
       });
       try {

@@ -18,7 +18,8 @@ different executable. Verified setup accepts a native Codex executable or the
 official `@openai/codex` npm entrypoint, including its installed symlink or
 Windows npm launcher. Arbitrary wrapper scripts cannot be verified because
 their native target is unknown; select the native executable or official npm
-launcher instead. Codex classifies WebSocket transport as experimental
+launcher instead. An `app-server proxy` also cannot supply verified setup because
+its local executable only forwards requests to a separate daemon. Codex classifies WebSocket transport as experimental
 and unsupported; use it only for non-production testing against an app-server
 already running elsewhere:
 
@@ -111,6 +112,10 @@ only decisions that the native request can preserve. For example, a command
 that permits one execution but not session trust offers allow-once and deny;
 byte-bound script approvals also remain one-shot. File prompts support both
 one-shot and session approval.
+
+If another connected Codex client answers a native approval request, OpenClaw
+dismisses the matching pending prompt without sending a second answer or treating
+that resolution as a timeout or tool failure.
 
 Terminal operator decisions reuse the Gateway's authoritative approval row and
 its exact execution binding. When execution identity collection is enabled,

@@ -76,7 +76,6 @@ const adminRequest = {
 let state: Awaited<ReturnType<typeof createOpenClawTestState>>;
 let repository: string;
 let storePath: string;
-let parent: SessionEntry;
 
 type CreatedWorktreeSession = {
   key: string;
@@ -162,6 +161,16 @@ async function createDirectProjectParent() {
   return { ...created.payload!, project };
 }
 
+async function createManagedProjectParent() {
+  const created = await directSessionReq<CreatedWorktreeSession>(
+    "sessions.create",
+    { ...parentCreateParams, cwd: repository },
+    adminRequest,
+  );
+  expect(created.ok, JSON.stringify(created.error)).toBe(true);
+  return created.payload!;
+}
+
 beforeEach(async () => {
   state = await createOpenClawTestState({ layout: "state-only", prefix: "openclaw-spawn-repo-" });
   const defaultWorkspace = path.join(state.root, "non-git-workspace");
@@ -171,13 +180,6 @@ beforeEach(async () => {
   closeOpenClawStateDatabaseForTest();
   testState.agentConfig = { workspace: defaultWorkspace };
   ({ storePath } = await createSessionStoreDir());
-  const created = await directSessionReq<CreatedWorktreeSession>(
-    "sessions.create",
-    { ...parentCreateParams, cwd: repository },
-    adminRequest,
-  );
-  expect(created.ok, JSON.stringify(created.error)).toBe(true);
-  parent = created.payload!.entry;
 });
 
 afterEach(async () => {
@@ -201,6 +203,7 @@ test.each([
 ] as const)(
   "visible spawn tool selects $source project through the write-scope Gateway (worktree=$worktree, required=$required)",
   async ({ source, worktree, required }) => {
+    const { entry: parent } = await createManagedProjectParent();
     if (required) {
       replaceSessionEntrySync(
         { agentId: "main", sessionKey: parentKey, storePath },
@@ -298,6 +301,7 @@ test.each([
 ] as const)(
   "required parent rejects external $source project before binding or allocation with global sandbox off (worktree=$worktree)",
   async ({ source, worktree }) => {
+    const { entry: parent } = await createManagedProjectParent();
     replaceSessionEntrySync(
       { agentId: "main", sessionKey: parentKey, storePath },
       { ...parent, sandbox: "required" },
@@ -374,6 +378,7 @@ test.each([
 );
 
 test("required parent rejects immediate registered-project worktree preparation", async () => {
+  const { entry: parent } = await createManagedProjectParent();
   replaceSessionEntrySync(
     { agentId: "main", sessionKey: parentKey, storePath },
     { ...parent, sandbox: "required" },
@@ -391,6 +396,7 @@ test("required parent rejects immediate registered-project worktree preparation"
 });
 
 test("visible spawn tool preserves project validation and external cwd authorization", async () => {
+  await createManagedProjectParent();
   const project = await registerProjectRegistry({ path: repository });
   const { getRuntimeConfig } = await getGatewayConfigModule();
   const context = createDirectChatContext({
@@ -441,7 +447,7 @@ test.each(["managed", "direct"])(
   "trusted same-agent worktree spawns inherit the parent's %s project",
   async (source) => {
     const selectedParent =
-      source === "direct" ? await createDirectProjectParent() : { key: parentKey, entry: parent };
+      source === "direct" ? await createDirectProjectParent() : await createManagedProjectParent();
     const created = await createChild({}, false, selectedParent.key);
     expect(created.ok, JSON.stringify(created.error)).toBe(true);
     expect(created.payload?.entry.worktree?.repoRoot).toBe(repository);
@@ -501,6 +507,7 @@ test("worktree spawns do not inherit an unregistered parent working directory", 
 });
 
 test("keyed worktree creation reuses its recorded base after reopening the registry", async () => {
+  const { entry: parent } = await createManagedProjectParent();
   const params = { ...parentCreateParams, cwd: repository };
   await closeOpenClawStateDatabaseAsync();
   closeOpenClawStateDatabaseForTest();
@@ -569,7 +576,9 @@ test.each([
   "trusted worktree spawns from %s parents preserve %s source selection",
   async (source, selection) => {
     const requesterSessionKey =
-      source === "direct" ? (await createDirectProjectParent()).key : parentKey;
+      source === "direct"
+        ? (await createDirectProjectParent()).key
+        : (await createManagedProjectParent()).key;
     const otherRepository = await createRepository("other-project");
     let params: Record<string, unknown>;
     if (selection === "project") {
@@ -596,6 +605,7 @@ test.each([
 );
 
 test("parent linkage does not authorize an operator's out-of-workspace source", async () => {
+  await createManagedProjectParent();
   const linked = await directSessionReq(
     "sessions.create",
     { agentId: "main", label: "Operator child", parentSessionKey: parentKey, worktree: true },
@@ -613,6 +623,7 @@ test("parent linkage does not authorize an operator's out-of-workspace source", 
 });
 
 test("trusted worktree spawns reject a stale parent registry binding", async () => {
+  const { entry: parent } = await createManagedProjectParent();
   replaceSessionEntrySync(
     { agentId: "main", sessionKey: parentKey, storePath },
     { ...parent, worktree: { ...parent.worktree!, id: "another-worktree" } },
@@ -621,6 +632,7 @@ test("trusted worktree spawns reject a stale parent registry binding", async () 
 });
 
 test("trusted worktree spawns roll back when the parent changes during preparation", async () => {
+  const { entry: parent } = await createManagedProjectParent();
   const createWorktree = managedWorktrees.createWithOutcome.bind(managedWorktrees);
   vi.spyOn(managedWorktrees, "createWithOutcome").mockImplementation(async (params) => {
     const outcome = await createWorktree(params);
@@ -637,6 +649,7 @@ test("trusted worktree spawns roll back when the parent changes during preparati
 });
 
 test("publishes a failed worktree spawn only after its durable session failure", async () => {
+  await createManagedProjectParent();
   const key = "agent:main:dashboard:failed-worktree-child";
   const target = { agentId: "main", sessionKey: key, storePath };
   const preparation = createDeferredCore<never>();
@@ -764,6 +777,7 @@ test("publishes a failed worktree spawn only after its durable session failure",
 test.each(["archive", "replace", "rebind", "stale-child"] as const)(
   "deferred worktree preparation follows its child owner after %s",
   async (change) => {
+    const { entry: parent } = await createManagedProjectParent();
     const { chatHandlers } = await import("./server-methods/chat.js");
     const initialSend = vi
       .spyOn(chatHandlers, "chat.send")

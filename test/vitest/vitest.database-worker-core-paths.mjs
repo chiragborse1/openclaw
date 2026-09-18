@@ -22,6 +22,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/state/backup-run-records.test.ts",
   "src/tasks/task-registry.async-restore.test.ts",
   "src/tasks/task-registry-flow-sync.test.ts",
+  "src/tasks/task-registry-live-flow.worker.test.ts",
   "src/tasks/task-registry.restore-ownership.test.ts",
   "src/agents/agent-harness-completion-delivery.test.ts",
   "src/agents/embedded-agent-runner/context-engine-maintenance.lifecycle.test.ts",
@@ -94,6 +95,8 @@ export const databaseWorkerCoreTestFiles = [
   "src/agents/sessions/sdk.auth-migration.test.ts",
   "src/agents/subagents/completion/subagent-completion-admission.store.test.ts",
   "src/commands/doctor-db-bloat.worker.test.ts",
+  "src/commands/doctor-device-pairing.worker.test.ts",
+  "src/commands/doctor-device-pairing.test.ts",
   "src/commands/doctor-maintenance.worker.test.ts",
   "src/flows/doctor-health.dangling-workshop-index.test.ts",
   "src/entry.memory-json.test.ts",
@@ -135,6 +138,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/plugin-state/plugin-state-worker.test.ts",
   "src/agents/tools/cron-tool.output-contract.test.ts",
   "src/plugins/services.cron.test.ts",
+  "test/plugins/memory-dreaming-cron.test.ts",
   "src/state/creator-namespace-migration.test.ts",
 ];
 

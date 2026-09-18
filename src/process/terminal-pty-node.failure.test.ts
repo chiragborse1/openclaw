@@ -22,7 +22,9 @@ vi.mock("node:fs", async (importOriginal) => {
     },
   };
 });
-vi.mock("../infra/executable-path.js", () => ({ resolveExecutablePath: () => process.execPath }));
+vi.mock("../infra/node-runtime-executable.js", () => ({
+  resolveNodeRuntimeExecutable: () => process.execPath,
+}));
 vi.mock("../infra/runtime-worker-url.js", () => ({
   resolveRuntimeWorkerUrl: () => new URL("file:///fixture/terminal-worker.js"),
   resolveRuntimeWorkerArgv: () => [],
