@@ -431,6 +431,7 @@ src/config/validation-issues.ts
 src/config/validation-plugin-config.ts
 src/config/validation-plugin-registry.ts
 src/config/validation-plugin-rules.ts
+src/config/validation-prepared.ts
 src/config/validation.ts
 src/config/validation.types.ts
 src/config/version.ts
@@ -898,6 +899,7 @@ src/plugins/plugin-metadata-snapshot-required.ts
 src/plugins/plugin-metadata-snapshot.runtime.ts
 src/plugins/plugin-metadata-snapshot.ts
 src/plugins/plugin-metadata-state-worker.ts
+src/plugins/plugin-metadata-workspaces.ts
 src/plugins/plugin-module-loader-cache.ts
 src/plugins/plugin-module-loader-recovery.ts
 src/plugins/plugin-native-module-loader.ts
