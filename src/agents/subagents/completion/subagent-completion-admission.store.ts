@@ -565,6 +565,8 @@ export function settleRequesterCompletionBatch(params: {
             checkedOmittedIds.add(id);
           }
         }
+        // Decoding restores restart defaults, not the active process's cleanup ownership.
+        subagent.cleanupHandled = expected.cleanupHandled;
         let mutation: CompletionMutation = { subagent };
         if (
           subagent.pauseReason !== "sessions_yield" &&

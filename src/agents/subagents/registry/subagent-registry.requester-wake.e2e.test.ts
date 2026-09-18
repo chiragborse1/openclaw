@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { replaceSessionEntry } from "../../../config/sessions/session-accessor.js";
 import type { SessionDeliveryState } from "../../../config/sessions/types.js";
 import type { CallGatewayOptions } from "../../../gateway/call.js";
 import type { GatewayRequestContext } from "../../../gateway/server-methods/types.js";
@@ -10,6 +11,10 @@ import {
   bindGatewayContextResolver,
   getGatewayContextResolver,
 } from "../../../plugins/runtime/gateway-request-scope.js";
+import {
+  createOpenClawTestState,
+  type OpenClawTestState,
+} from "../../../test-utils/openclaw-test-state.js";
 import { prepareSystemAgentRunAdmission } from "../../admitted-run-context.js";
 import type { AgentRunTerminalReplySnapshot } from "../../agent-run-terminal-reply.types.js";
 import type { deliverAgentCommandResult } from "../../command/delivery.js";
@@ -69,6 +74,7 @@ let agentCallGates = new Map<string, Promise<void>>();
 let releaseAgentCallGate: (() => void) | undefined;
 let chatHistoryBySessionKey = new Map<string, Array<Record<string, unknown>>>();
 let sessionStore: Record<string, SessionStoreEntry> = {};
+let sessionStorePath: string;
 let rejectNextRequesterWake = false;
 let emptyGatedAgentReply = false;
 
@@ -119,7 +125,7 @@ const loadConfigMock = vi.fn(() => ({
 vi.mock("../../../config/sessions.js", () => ({
   loadSessionStore: vi.fn(() => sessionStore),
   resolveAgentIdFromSessionKey: (key: string) => key.match(/^agent:([^:]+)/)?.[1] ?? "main",
-  resolveSessionStorePathCore: () => "/tmp/test-store",
+  resolveSessionStorePathCore: () => sessionStorePath,
   resolveMainSessionKey: () => MAIN_REQUESTER_SESSION_KEY,
   updateSessionStore: vi.fn(),
 }));
@@ -150,11 +156,13 @@ const loadSubagentRegistryRuntimeForTest = async () =>
 
 describe("requester settle wake product flow", () => {
   let previousFastTestEnv: string | undefined;
+  let testState: OpenClawTestState;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    testState = await createOpenClawTestState({ scenario: "minimal", applyEnv: true });
+    sessionStorePath = testState.statePath("agents", "main", "sessions", "sessions.json");
     previousFastTestEnv = process.env.OPENCLAW_TEST_FAST;
     process.env.OPENCLAW_TEST_FAST = "1";
-    vi.useFakeTimers();
     loadConfigMock.mockReset().mockReturnValue({
       agents: {
         defaults: { subagents: { archiveAfterMinutes: 0 } },
@@ -180,6 +188,11 @@ describe("requester settle wake product flow", () => {
         },
       },
     };
+    await replaceSessionEntry(
+      { storePath: sessionStorePath, sessionKey: MAIN_REQUESTER_SESSION_KEY },
+      sessionStore[MAIN_REQUESTER_SESSION_KEY]!,
+    );
+    vi.useFakeTimers();
     registry.testing.setDepsForTest({
       callGateway: callGatewayMock as typeof import("../../../gateway/call.js").callGateway,
       getRuntimeConfig:
@@ -189,9 +202,6 @@ describe("requester settle wake product flow", () => {
         lifecycleHandler = handler;
         return () => {};
       }) as unknown as typeof import("../../../infra/agent-events.js").onAgentEvent,
-      persistSubagentRunsToDisk: () => {},
-      persistSubagentRunsToDiskOrThrow: () => {},
-      restoreSubagentRunsFromDisk: () => 0,
       maybeWakeRequesterAfterAllChildrenSettled: async (params) => {
         if (rejectNextRequesterWake) {
           rejectNextRequesterWake = false;
@@ -223,7 +233,7 @@ describe("requester settle wake product flow", () => {
         loadConfigMock as typeof import("../../../config/config.js").getRuntimeConfig,
       readSubagentSessionEntry: (_storePath, sessionKey) => sessionStore[sessionKey],
       resolveAgentIdFromSessionKey: (key) => key?.match(/^agent:([^:]+)/)?.[1] ?? "main",
-      resolveSessionStorePathCore: () => "/tmp/test-store",
+      resolveSessionStorePathCore: () => sessionStorePath,
     });
   });
 
@@ -244,6 +254,7 @@ describe("requester settle wake product flow", () => {
     } else {
       process.env.OPENCLAW_TEST_FAST = previousFastTestEnv;
     }
+    await testState.cleanup();
   });
 
   const flushAsync = async () => {
