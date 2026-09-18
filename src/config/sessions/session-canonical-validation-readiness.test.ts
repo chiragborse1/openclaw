@@ -45,8 +45,8 @@ function seedPendingRows(count: number, textBytes = 0, agentId = "main") {
   return { options, database };
 }
 
-it.each(["unchanged", "pending edit", "replacement"] as const)(
-  "admits only changed populated stores after a process restart (%s)",
+it.each(["unchanged", "pending edit", "replacement", "revoked"] as const)(
+  "admits only changed or revoked populated stores after a process restart (%s)",
   async (change) => {
     await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
       const agentIds = ["main", "worker-a", "worker-b"];
@@ -84,7 +84,13 @@ it.each(["unchanged", "pending edit", "replacement"] as const)(
           "--eval",
           `import { certifySessionCanonicalValidationPending } from ${JSON.stringify(readiness)};
            import { openOpenClawAgentDatabaseReadOnly } from ${JSON.stringify(reader)};
-           import { getOpenClawAgentDatabaseValidation } from ${JSON.stringify(validation)};
+           import {
+             getOpenClawAgentDatabaseValidation,
+             invalidateOpenClawAgentDatabaseValidation,
+           } from ${JSON.stringify(validation)};
+           if (${JSON.stringify(change)} === "revoked") {
+             invalidateOpenClawAgentDatabaseValidation(${JSON.stringify(database.path)});
+           }
            let workers = 0;
            let integrityReceipts = 0;
          const observed = new Error("canonical worker requested");

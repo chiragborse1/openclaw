@@ -64,16 +64,47 @@ describe("canonical proof on physical database validation", () => {
     });
   });
 
-  it("does not revive revoked canonical proof when physical integrity is verified again", async () => {
-    await withReceiptFixture(true, (database, options) => {
-      runOpenClawAgentWriteTransaction(recordOpenClawAgentCanonicalValidation, options);
-      expect(markOpenClawAgentCanonicalValidation(database)).toBe(true);
-      invalidateOpenClawAgentDatabaseValidation(database.path);
-      setOpenClawAgentDatabaseValidation(database);
-      expect(getOpenClawAgentDatabaseValidation(database)).toBeDefined();
-      expect(hasOpenClawAgentCanonicalValidation(database)).toBe(false);
-    });
-  });
+  it.each([
+    { cache: "warm", admission: "set" },
+    { cache: "cold", admission: "set" },
+    { cache: "warm", admission: "adopt" },
+    { cache: "cold", admission: "adopt" },
+  ] as const)(
+    "does not revive revoked canonical proof on $cache integrity admission by $admission",
+    async ({ cache, admission }) => {
+      await withReceiptFixture(true, (database, options) => {
+        runOpenClawAgentWriteTransaction(recordOpenClawAgentCanonicalValidation, options);
+        expect(markOpenClawAgentCanonicalValidation(database)).toBe(true);
+        const receipt = getOpenClawAgentDatabaseValidation(database);
+        if (!receipt) {
+          throw new Error("Expected physical validation receipt");
+        }
+        // A separate worker can retain independent proof for this same physical file.
+        const transferred = {
+          ...receipt,
+          valid: receipt.valid.slice(0),
+          canonicalReady: receipt.canonicalReady.slice(0),
+        };
+        if (cache === "cold") {
+          clearOpenClawAgentDatabaseValidationCache(database.path);
+        }
+        invalidateOpenClawAgentDatabaseValidation(database.path);
+        if (admission === "adopt") {
+          expect(adoptOpenClawAgentDatabaseValidation(database, transferred)).toBe(true);
+          expect(getOpenClawAgentDatabaseValidation(database)).toBe(transferred);
+        } else {
+          setOpenClawAgentDatabaseValidation(database);
+          expect(getOpenClawAgentDatabaseValidation(database)).toBeDefined();
+        }
+        expect(hasOpenClawAgentCanonicalValidation(database)).toBe(false);
+        expect(markOpenClawAgentCanonicalValidation(database)).toBe(true);
+        expect(hasOpenClawAgentCanonicalValidation(database)).toBe(true);
+        if (admission === "adopt") {
+          expect(Atomics.load(new Int32Array(transferred.canonicalReady), 0)).toBe(1);
+        }
+      });
+    },
+  );
 
   it.each([false, true])(
     "initializes readiness from committed emptiness (populated: %s)",

@@ -27,7 +27,7 @@ type CanonicalValidationDatabase = { db: DatabaseSync; path?: string; agentId: s
 // Ordinary close retains proof. Durable canonical receipts never mint integrity
 // verification; only a successful writable open supplies proof workers can borrow.
 const validatedPaths = resolveGlobalSingleton<
-  Map<string, { validation: OpenClawAgentDatabaseValidation; integrityVerified: boolean }>
+  Map<string, { validation: OpenClawAgentDatabaseValidation; integrityVerified: boolean } | null>
 >(
   Symbol.for("openclaw.agentDatabaseValidatedPaths"),
   () => new Map(),
@@ -69,6 +69,14 @@ function matchesValidation(
     validation.agentId === database.agentId &&
     validation.identity === findOpenClawAgentDatabaseIdentity(database)?.identity &&
     Atomics.load(new Int32Array(validation.valid), 0) === 1
+  );
+}
+
+function hasRevokedValidation(pathname: string): boolean {
+  const previous = validatedPaths.get(path.resolve(pathname));
+  return (
+    previous === null ||
+    (previous !== undefined && Atomics.load(new Int32Array(previous.validation.valid), 0) !== 1)
   );
 }
 
@@ -164,6 +172,10 @@ export function adoptOpenClawAgentDatabaseValidation(
   if (getOpenClawAgentDatabaseValidation(database)) {
     return true;
   }
+  if (hasRevokedValidation(database.path)) {
+    // Integrity handoff cannot replace the parent's requested canonical certification.
+    Atomics.store(new Int32Array(validation.canonicalReady), 0, 0);
+  }
   invalidateOpenClawAgentDatabaseValidation(database.path);
   validatedPaths.set(path.resolve(database.path), { validation, integrityVerified: true });
   bindValidationLifetime(database, validation);
@@ -212,8 +224,7 @@ function createValidationReceipt(
 export function setOpenClawAgentDatabaseValidation(
   database: ValidationDatabase,
 ): OpenClawAgentDatabaseValidation {
-  const previous = validatedPaths.get(path.resolve(database.path))?.validation;
-  const revoked = previous && Atomics.load(new Int32Array(previous.valid), 0) !== 1;
+  const revoked = hasRevokedValidation(database.path);
   const validation = createValidationReceipt(
     database,
     isOpenClawAgentCanonicalStoreEmpty(database) ||
@@ -232,12 +243,15 @@ export function invalidateOpenClawAgentDatabaseValidation(pathname: string): voi
   const validation = validatedPaths.get(resolved)?.validation;
   if (validation) {
     Atomics.store(new Int32Array(validation.valid), 0, 0);
+  } else {
+    // Revocation can precede the first in-process read of a durable receipt.
+    validatedPaths.set(resolved, null);
   }
 }
 
 export function invalidateOpenClawAgentDatabaseValidationsForAgent(agentId: string): void {
-  for (const [pathname, { validation }] of validatedPaths) {
-    if (validation.agentId === agentId) {
+  for (const [pathname, entry] of validatedPaths) {
+    if (entry?.validation.agentId === agentId) {
       invalidateOpenClawAgentDatabaseValidation(pathname);
     }
   }
