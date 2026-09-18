@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import type { CronJob } from "../cron/types.js";
+import * as matcher from "./cron-stream-matcher.js";
 import {
+  createCronStreamMatchingJob,
+  createCronStreamWatcherFixture,
   createWatchers,
   exitResult,
   fakeSupervisor,
@@ -11,10 +14,52 @@ import {
 
 describe("cron stream output", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
   describe("serialized output interleavings", () => {
+    it("restarts the quiet window when a match overtakes a queued close", async () => {
+      vi.useFakeTimers();
+      const entered = createDeferred();
+      const matching = createDeferred<boolean>();
+      vi.spyOn(matcher, "matchCronStreamLines")
+        .mockResolvedValueOnce(true)
+        .mockImplementationOnce(async () => {
+          entered.resolve();
+          return await matching.promise;
+        });
+      const { fake, fireBatch, watchers } = createCronStreamWatcherFixture({ minIntervalMs: 1 });
+      try {
+        await watchers.start(createCronStreamMatchingJob("^keep"));
+        fake.inputs[0]?.onStdout?.("keep first\n");
+        await settle();
+        fake.inputs[0]?.onStdout?.("keep second\n");
+        await entered.promise;
+
+        await vi.advanceTimersByTimeAsync(50);
+        matching.resolve(true);
+        await settle();
+        expect(fireBatch).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(49);
+        expect(fireBatch).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(fireBatch).toHaveBeenCalledExactlyOnceWith(
+          expect.any(Object),
+          "keep first\nkeep second",
+          expect.any(String),
+          expect.any(String),
+        );
+        expect(watchers.inspect("stream-job")).toMatchObject({
+          droppedBatches: 0,
+          coalescedBatches: 0,
+        });
+      } finally {
+        matching.resolve(false);
+        await watchers.stopAll("shutdown");
+      }
+    });
+
     it("drops and counts an open batch when disable wins, then freezes after stop", async () => {
       vi.useFakeTimers();
       const fake = fakeSupervisor();
