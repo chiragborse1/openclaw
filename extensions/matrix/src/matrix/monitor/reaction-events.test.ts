@@ -1,5 +1,6 @@
 // Matrix tests cover reaction events plugin behavior.
 import {
+  enqueueSystemEvent,
   peekSystemEventEntries,
   resetSystemEventsForTest,
 } from "openclaw/plugin-sdk/system-event-runtime";
@@ -102,6 +103,7 @@ function buildConfig(): CoreConfig {
 
 function buildCore() {
   return {
+    system: { enqueueSystemEvent },
     channel: {
       routing: {
         resolveAgentRoute: vi.fn().mockReturnValue({

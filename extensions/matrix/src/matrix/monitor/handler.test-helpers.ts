@@ -6,6 +6,7 @@ import {
 import type { RuntimeLogger } from "openclaw/plugin-sdk/plugin-runtime";
 import { finalizeInboundContext as finalizeCoreInboundContext } from "openclaw/plugin-sdk/reply-runtime";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime";
+import { enqueueSystemEvent } from "openclaw/plugin-sdk/system-event-runtime";
 import { vi, type Mock } from "vitest";
 import type {
   MatrixConfig,
@@ -51,6 +52,7 @@ const DEFAULT_ROUTE = {
 };
 
 type MatrixHandlerTestHarnessOptions = {
+  system?: Pick<MatrixMonitorHandlerParams["core"]["system"], "enqueueSystemEvent">;
   accountId?: string;
   accountConfig?: MatrixConfig;
   cfg?: unknown;
@@ -296,6 +298,7 @@ export function createMatrixHandlerTestHarness(
       ...options.client,
     } as never,
     core: {
+      system: options.system ?? { enqueueSystemEvent },
       config: {
         current: options.currentConfig ?? (() => options.liveCfg ?? cfgForHandler),
       },
