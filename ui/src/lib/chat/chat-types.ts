@@ -136,6 +136,8 @@ export type ChatQueueItem = {
   sessionId?: string;
   expectedLeafEntryId?: string | null;
   sendState?:
+    // Process-local submission handoff; durable custody remains waiting-idle.
+    | "submitting"
     | "waiting-model"
     | "waiting-idle"
     | "executing-command"

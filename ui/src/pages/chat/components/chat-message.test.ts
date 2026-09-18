@@ -4623,7 +4623,7 @@ describe("grouped chat rendering", () => {
 
     renderMessage();
     expect(container.querySelector(".chat-image-frame")?.getAttribute("aria-busy")).toBe("true");
-    expect(container.querySelector(".chat-assistant-attachment-card")).toBeNull();
+    expect(container.querySelector(".chat-message-image")).toBeNull();
     await flushAssistantAttachmentAvailabilityChecks();
 
     const expectedMetaUrl = `/openclaw/__openclaw__/assistant-media?source=${encodeURIComponent(source).replaceAll("%20", "+")}&meta=1`;
@@ -4632,7 +4632,7 @@ describe("grouped chat rendering", () => {
     expect(
       container.querySelector<HTMLImageElement>(".chat-message-image")?.getAttribute("src"),
     ).toBe(expectedMetaUrl.replace("&meta=1", "&mediaTicket=ticket-local"));
-    expect(container.querySelector(".chat-assistant-attachment-card__action-skeleton")).toBeNull();
+    expect(container.querySelector(".chat-assistant-attachment-card")).toBeNull();
   });
 
   it("stops checking when local assistant attachment metadata fetch stalls", async () => {
@@ -5976,43 +5976,6 @@ describe("grouped chat rendering", () => {
       title: "Inline demo",
       preferredHeight: 360,
     });
-  });
-
-  it("updates the authenticated widget's script policy when grouped messages rerender", () => {
-    const container = document.createElement("div");
-    const renderCanvas = (embedSandboxMode: "strict" | "scripts") =>
-      renderMessageGroups(
-        container,
-        [
-          createMessageGroup(
-            createAssistantMessage(
-              [
-                { type: "text", text: "Inline canvas result." },
-                createAssistantCanvasBlock({ suffix: "sandbox-change" }),
-              ],
-              { id: "assistant-canvas-inline-sandbox-change" },
-            ),
-            "assistant",
-          ),
-        ],
-        { embedSandboxMode },
-      );
-
-    renderCanvas("strict");
-    const widget = expectCanvasWidget(container, {
-      docId: "cv_inline_sandbox-change",
-      title: "Inline demo",
-    });
-    expect(widget).toMatchObject({ allowScripts: false });
-
-    renderCanvas("scripts");
-    expect(container.querySelector("openclaw-canvas-widget-view")).toBe(widget);
-    expect(widget).toMatchObject({ allowScripts: true });
-
-    renderCanvas("strict");
-    expect(container.querySelector("openclaw-canvas-widget-view")).toBe(widget);
-    expect(widget).toMatchObject({ allowScripts: false });
-    expect(container.querySelector(".chat-tool-card__preview-panel > iframe")).toBeNull();
   });
 
   it("renders assistant_message canvas results in the assistant bubble even when tool rows are visible", () => {

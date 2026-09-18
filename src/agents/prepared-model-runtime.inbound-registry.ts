@@ -157,6 +157,7 @@ export function prepareWorkspacePluginRegistries(
   basePluginIds?: readonly string[],
   registryResources?: PreparedModelRuntimeBuildResources,
   purpose?: RuntimePluginLoadPurpose,
+  retainRegistry?: (registry: PluginRegistry) => void,
 ): PreparedWorkspacePluginRegistries | Promise<PreparedWorkspacePluginRegistries> {
   // Passive reads stay runtime-free; catalog workers and executable probes carry explicit scope.
   if (
@@ -182,6 +183,11 @@ export function prepareWorkspacePluginRegistries(
           },
         ));
   const baseRegistry = reusableGeneration?.pluginRegistry ?? inboundPluginRegistry;
+  for (const registry of new Set([inboundPluginRegistry, baseRegistry])) {
+    if (registry) {
+      retainRegistry?.(registry);
+    }
+  }
   primaryRegistry ??= reusableGeneration?.mediaCapabilityProviderSource?.registry ?? baseRegistry;
   let loadedPrimaryRegistry: PluginRegistry | undefined;
   const loadRuntimeRegistry = registryResources
@@ -221,14 +227,20 @@ export function prepareWorkspacePluginRegistries(
           },
         )
       : baseRegistry;
-  const prepared = (registry: PluginRegistry | undefined): PreparedWorkspacePluginRegistries => ({
-    runtimePluginRegistry: registry,
-    primaryRegistry:
-      registry === baseRegistry
-        ? (primaryRegistry ?? registry)
-        : (loadedPrimaryRegistry ?? registry),
-    ...(inboundPluginRegistry ? { inboundPluginRegistry } : {}),
-  });
+  const prepared = (registry: PluginRegistry | undefined): PreparedWorkspacePluginRegistries => {
+    // Acquire custody before a synchronous return or the selector promise exposes this handle.
+    if (registry) {
+      retainRegistry?.(registry);
+    }
+    return {
+      runtimePluginRegistry: registry,
+      primaryRegistry:
+        registry === baseRegistry
+          ? (primaryRegistry ?? registry)
+          : (loadedPrimaryRegistry ?? registry),
+      ...(inboundPluginRegistry ? { inboundPluginRegistry } : {}),
+    };
+  };
   return runtimePluginRegistry instanceof Promise
     ? runtimePluginRegistry.then(prepared)
     : prepared(runtimePluginRegistry);
