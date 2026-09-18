@@ -836,8 +836,13 @@ test("cancellation joins the active Convex launcher and never tries another", as
   const fs = await import("node:fs");
   const path = await import("node:path");
   const fixture = await launcherFixture(context, {
-    convex:
-      "fs.writeFileSync(require('node:path').join(__dirname, 'pid'), String(process.pid)); setInterval(() => {}, 1000);",
+    // A create event can arrive before writeFileSync publishes the PID bytes.
+    convex: `
+const pidPath = require('node:path').join(__dirname, 'pid');
+fs.writeFileSync(pidPath + '.tmp', String(process.pid));
+fs.renameSync(pidPath + '.tmp', pidPath);
+setInterval(() => {}, 1000);
+`,
     bunx: authenticatedLauncher,
   });
   const pidPath = path.join(fixture.convexProjectDir, "pid");

@@ -31,7 +31,7 @@ import {
   connectGatewayClient,
   disconnectGatewayClient,
 } from "../../src/gateway/test-helpers.e2e.js";
-import { listKnownProviderAuthEnvVarNames } from "../../src/secrets/provider-env-vars.js";
+import { listKnownProviderAuthEnvVarNamesCore } from "../../src/secrets/provider-env-vars.js";
 import {
   closeOpenClawAgentDatabaseByPath,
   closeOpenClawAgentDatabasesForTest,
@@ -109,7 +109,9 @@ export async function runSqliteSessionsTranscriptsFlipProof(options: RunOptions 
   const inst = await createOpenClawTestInstance({
     name: `sqlite-sessions-transcripts-flip-${randomUUID()}`,
     env: {
-      ...Object.fromEntries(listKnownProviderAuthEnvVarNames().map((name) => [name, undefined])),
+      ...Object.fromEntries(
+        listKnownProviderAuthEnvVarNamesCore().map((name) => [name, undefined]),
+      ),
       ALL_PROXY: undefined,
       HTTP_PROXY: undefined,
       HTTPS_PROXY: undefined,

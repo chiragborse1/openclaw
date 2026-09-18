@@ -160,29 +160,22 @@ export async function prepareWorkspaceBuildGroup(
     reusablePluginGeneration?.preferBuiltPluginArtifacts ??
     options.preferBuiltPluginArtifacts === true;
   options.registryResources?.retainGeneration(reusablePluginGeneration);
-  const registryClaims = new Map<PluginRegistry, ReturnType<typeof retainPreparedPluginRegistry>>();
-  await using registryCustody = {
-    retain: (registry: PluginRegistry) => {
-      if (!registryClaims.has(registry)) {
-        // The final generation acquires its own claim before these construction claims release.
-        registryClaims.set(registry, retainPreparedPluginRegistry(registry));
-      }
-    },
-    [Symbol.asyncDispose]: async () => {
-      const results = await Promise.allSettled(
-        [...registryClaims.values()].map(async (release) => await release?.()),
-      );
-      const failures = results.flatMap((result) =>
-        result.status === "rejected" ? [result.reason] : [],
-      );
-      if (failures.length) {
-        throw new AggregateError(failures, "Prepared registry construction cleanup failed");
-      }
-    },
-  };
+  const retainedRegistries = new Set<PluginRegistry>();
+  await using registryBorrows = new AsyncDisposableStack();
   const preparingRegistries = prepareWorkspacePluginRegistries(
     input,
     pluginMetadataSnapshot,
+    (registry) => {
+      // Initial run admission can inspect a new selection before its caller holds
+      // a generation lease. Borrow the selected source before that async load.
+      if (!retainedRegistries.has(registry)) {
+        retainedRegistries.add(registry);
+        const release = retainPreparedPluginRegistry(registry);
+        if (release) {
+          registryBorrows.defer(release);
+        }
+      }
+    },
     loadInboundPluginRegistry,
     preferBuiltPluginArtifacts,
     reusablePluginGeneration,
@@ -190,7 +183,6 @@ export async function prepareWorkspaceBuildGroup(
     options.basePluginIds,
     options.registryResources,
     options.purpose,
-    registryCustody.retain,
   );
   const { inboundPluginRegistry, runtimePluginRegistry, primaryRegistry } =
     preparingRegistries instanceof Promise ? await preparingRegistries : preparingRegistries;

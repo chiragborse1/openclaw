@@ -142,7 +142,7 @@ async function createRealMetadataLifecycle(
   if (options.attach !== false) {
     await attach();
   }
-  const modelEvent = (event: { phase: string; error?: Error }) =>
+  const modelEvent = (event: { phase: string; error?: Error; modelFactsChanged?: boolean }) =>
     mocks.registerModelListener.mock.calls[0]![0](event);
   const authEvent = () => mocks.registerAuthListener.mock.calls[0]![0]();
   return {
@@ -810,7 +810,11 @@ describe("gateway chat metadata lifecycle", () => {
     const harness = await createRealMetadataLifecycle();
     try {
       const before = await harness.lifecycle.read({ agentId: "main" });
-      harness.modelEvent({ phase: "catalog-failed", error: new Error("catalog attempt failed") });
+      harness.modelEvent({
+        phase: "catalog-failed",
+        error: new Error("catalog attempt failed"),
+        modelFactsChanged: false,
+      });
       const after = await harness.lifecycle.read({ agentId: "main" });
       expect(after).toEqual(before);
       expect(harness.warn).not.toHaveBeenCalled();
@@ -820,9 +824,14 @@ describe("gateway chat metadata lifecycle", () => {
     }
   });
 
-  it.each([true, false, undefined])(
-    "refreshes catalog status even when model facts changed is %s",
-    async (modelFactsChanged) => {
+  it.each([
+    { modelFactsChanged: true, refreshStatusChanged: false, refreshes: true },
+    { modelFactsChanged: false, refreshStatusChanged: false, refreshes: false },
+    { modelFactsChanged: undefined, refreshStatusChanged: false, refreshes: true },
+    { modelFactsChanged: false, refreshStatusChanged: true, refreshes: true },
+  ])(
+    "refreshes catalog metadata only for a change (%j)",
+    async ({ modelFactsChanged, refreshStatusChanged, refreshes }) => {
       const { lifecycle: pendingLifecycle, sidecarOwner } = createLifecycle(false);
       const lifecycle = await pendingLifecycle;
 
@@ -832,10 +841,10 @@ describe("gateway chat metadata lifecycle", () => {
       await vi.waitFor(() => expect(mocks.refresh).toHaveBeenCalledTimes(2));
       mocks.invalidate.mockClear();
 
-      modelListener({ phase: "catalog-published", modelFactsChanged });
+      modelListener({ phase: "catalog-published", modelFactsChanged, refreshStatusChanged });
 
       expect(mocks.invalidate).not.toHaveBeenCalled();
-      await vi.waitFor(() => expect(mocks.refresh).toHaveBeenCalledTimes(3));
+      expect(mocks.refresh).toHaveBeenCalledTimes(refreshes ? 3 : 2);
     },
   );
 

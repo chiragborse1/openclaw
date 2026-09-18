@@ -150,6 +150,7 @@ type PreparedWorkspacePluginRegistries = {
 export function prepareWorkspacePluginRegistries(
   input: PreparedModelRuntimeInput,
   metadataSnapshot: PluginMetadataSnapshot,
+  retainRegistry: (registry: PluginRegistry) => void,
   loadInboundRegistry?: PreparedInboundRegistryLoader,
   preferBuiltPluginArtifacts = false,
   reusableGeneration?: PreparedModelRuntimePluginGeneration,
@@ -157,7 +158,6 @@ export function prepareWorkspacePluginRegistries(
   basePluginIds?: readonly string[],
   registryResources?: PreparedModelRuntimeBuildResources,
   purpose?: RuntimePluginLoadPurpose,
-  retainRegistry?: (registry: PluginRegistry) => void,
 ): PreparedWorkspacePluginRegistries | Promise<PreparedWorkspacePluginRegistries> {
   // Passive reads stay runtime-free; catalog workers and executable probes carry explicit scope.
   if (
@@ -185,7 +185,7 @@ export function prepareWorkspacePluginRegistries(
   const baseRegistry = reusableGeneration?.pluginRegistry ?? inboundPluginRegistry;
   for (const registry of new Set([inboundPluginRegistry, baseRegistry])) {
     if (registry) {
-      retainRegistry?.(registry);
+      retainRegistry(registry);
     }
   }
   primaryRegistry ??= reusableGeneration?.mediaCapabilityProviderSource?.registry ?? baseRegistry;
@@ -228,9 +228,8 @@ export function prepareWorkspacePluginRegistries(
         )
       : baseRegistry;
   const prepared = (registry: PluginRegistry | undefined): PreparedWorkspacePluginRegistries => {
-    // Acquire custody before a synchronous return or the selector promise exposes this handle.
     if (registry) {
-      retainRegistry?.(registry);
+      retainRegistry(registry);
     }
     return {
       runtimePluginRegistry: registry,
