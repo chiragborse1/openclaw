@@ -1,13 +1,18 @@
 /** Full-entry coverage for sessions_yield terminal projection. */
 import { expectDefined } from "@openclaw/normalization-core";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawTestState } from "../../test-utils/openclaw-test-state.js";
+import { createSubagentRunRecord } from "../subagent-test-fixtures.test-helpers.js";
+import type { SubagentRunRecord } from "../subagents/registry/subagent-registry.types.js";
+import { makeAssistantMessageFixture } from "../test-helpers/assistant-message-fixtures.js";
 import { makeAttemptResult } from "./run.overflow-compaction.fixture.js";
 import {
   mockedGlobalHookRunner,
+  mockedClassifyAssistantFailoverReason,
   mockedRunEmbeddedAttempt,
   createOverflowRunParams,
   resetSharedRunIntegrationHarnessMocks,
+  useOpenAIPlatformAuthFixture,
 } from "./run.overflow-compaction.harness.js";
 import { loadSharedRunIntegrationHarness } from "./run.shared-integration-harness.test-support.js";
 
@@ -45,6 +50,126 @@ describe("sessions_yield orchestration", () => {
     expect(result.meta.stopReason).toBe("end_turn");
     expect(result.meta.pendingToolCalls).toBeUndefined();
   });
+
+  it.each([
+    { spawnOnRetry: false, agentHarnessId: "openclaw" },
+    { spawnOnRetry: true, agentHarnessId: "openclaw" },
+    { spawnOnRetry: false, agentHarnessId: "codex" },
+    { spawnOnRetry: true, agentHarnessId: "codex" },
+  ])(
+    "hands off every accepted child after a transient retry ($agentHarnessId, new child: $spawnOnRetry)",
+    async ({ spawnOnRetry, agentHarnessId }) => {
+      const registry = await import("../subagents/registry/subagent-registry.js");
+      const { markRequesterTurnYieldedInRuns, settleRequesterTurnAfterSessionSpawns } =
+        await import("../subagents/registry/subagent-registry-requester-yield.js");
+      const { createReplyOperation } = await import("../../auto-reply/reply/reply-run-registry.js");
+      const params = { ...createOverflowRunParams(state), runId: "yield-retry-parent" };
+      const runs = new Map<string, SubagentRunRecord>();
+      const persistOrThrow = vi.fn();
+      const schedule = vi.fn();
+      const markYield = vi
+        .spyOn(registry, "markRequesterTurnYielded")
+        .mockImplementation((claim) =>
+          markRequesterTurnYieldedInRuns({ ...claim, runs, persistOrThrow }),
+        );
+      const settle = vi
+        .spyOn(registry, "settleRequesterAfterSessionSpawns")
+        .mockImplementation((claim) =>
+          settleRequesterTurnAfterSessionSpawns({ ...claim, runs, persistOrThrow, schedule }),
+        );
+      const acceptChild = (runId: string) => {
+        const child = createSubagentRunRecord({
+          runId,
+          childSessionKey: `agent:main:subagent:${runId}`,
+          requesterSessionKey: params.sessionKey,
+          requesterAgentId: params.agentId,
+          requesterTurnRunId: params.runId,
+          expectsCompletionMessage: true,
+          execution: { status: "running", startedAt: Date.now() },
+          completion: { required: true },
+          delivery: { status: "pending" },
+        });
+        runs.set(runId, child);
+        return { runId, childSessionKey: child.childSessionKey, expectsCompletionMessage: true };
+      };
+      const replyOperation = createReplyOperation({
+        sessionKey: params.sessionKey,
+        sessionId: params.sessionId,
+        resetTriggered: false,
+      });
+      mockedClassifyAssistantFailoverReason.mockReturnValue("server_error");
+      useOpenAIPlatformAuthFixture();
+      mockedRunEmbeddedAttempt
+        .mockImplementationOnce(async () => {
+          const accepted = acceptChild("child-before-retry");
+          expectDefined(runs.get(accepted.runId), "accepted child").execution = {
+            status: "terminal",
+            endedAt: Date.now(),
+            outcome: { status: "ok" },
+          };
+          const assistant = makeAssistantMessageFixture({
+            provider: "openai",
+            api: "openai-responses",
+            model: "gpt-5.6-luna",
+            stopReason: "error",
+            errorMessage: "Responses stream ended with unresolved tool calls",
+            content: [],
+          });
+          return makeAttemptResult({
+            agentHarnessId,
+            terminal: { kind: "ok" },
+            assistantTexts: [],
+            currentAttemptAssistant: assistant,
+            lastAssistant: assistant,
+            acceptedSessionSpawns: [accepted],
+          });
+        })
+        .mockImplementationOnce(async () => {
+          const accepted = spawnOnRetry ? [acceptChild("child-after-retry")] : [];
+          markYield({
+            requesterSessionKey: params.sessionKey,
+            requesterAgentId: params.agentId,
+            requesterTurnRunId: params.runId,
+          });
+          return makeAttemptResult({
+            agentHarnessId,
+            assistantTexts: [],
+            yieldDetected: true,
+            acceptedSessionSpawns: accepted,
+          });
+        });
+      try {
+        const result = await runEmbeddedAgent({
+          ...params,
+          provider: "openai",
+          model: "gpt-5.6-luna",
+          agentHarnessId,
+          replyOperation,
+        });
+        expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(2);
+        expect(result.meta.yielded).toBe(true);
+        expect(result.requesterContinuationSettled).toBe(true);
+        expect(result.acceptedSessionSpawns?.map((spawn) => spawn.runId).toSorted()).toEqual(
+          [...runs.keys()].toSorted(),
+        );
+        for (const child of runs.values()) {
+          expect(child).toMatchObject({
+            requesterTurnRunId: undefined,
+            requesterTurnYielded: undefined,
+            requesterSettleWake: {
+              status: "pending",
+              requesterYieldBatch: true,
+              batchRunIds: [...runs.keys()].toSorted(),
+            },
+          });
+        }
+      } finally {
+        replyOperation.complete();
+        markYield.mockRestore();
+        settle.mockRestore();
+      }
+    },
+  );
 
   it("clientToolCalls takes precedence over yieldDetected", async () => {
     // Edge case: both flags set (shouldn't happen, but clientToolCalls wins)
@@ -101,28 +226,26 @@ describe("sessions_yield orchestration", () => {
   });
 
   describe("yield with continuation evidence", () => {
-    it("yield with accepted spawn — diagnostic suppressed", async () => {
-      // Regression: a yielded turn with an accepted spawn must NOT emit the
-      // diagnostic — the spawned subagent will produce results.
+    it("rejects an unregistered accepted child instead of silently yielding", async () => {
       mockedRunEmbeddedAttempt.mockResolvedValueOnce(
         makeAttemptResult({
           yieldDetected: true,
-          yieldAcknowledgment: "Research started; results will follow.",
           assistantTexts: [],
-          acceptedSessionSpawns: [{ runId: "child-run", childSessionKey: "child-key" }],
+          acceptedSessionSpawns: [
+            {
+              runId: "missing-child-run",
+              childSessionKey: "agent:main:subagent:missing",
+              expectsCompletionMessage: true,
+            },
+          ],
         }),
       );
-
-      const result = await runEmbeddedAgent({
-        ...createOverflowRunParams(state),
-        runId: "run-yield-accepted-spawn-suppressed",
-      });
-
-      // Accepted spawn is continuation evidence → no diagnostic payload
-      expect(result.payloads).toBeUndefined();
-      expect(result.meta.stopReason).toBe("end_turn");
-      expect(result.meta.yielded).toBe(true);
-      expect(result.meta.yieldAcknowledgment).toBe("Research started; results will follow.");
+      await expect(
+        runEmbeddedAgent({
+          ...createOverflowRunParams(state),
+          runId: "run-yield-missing-child",
+        }),
+      ).rejects.toThrow("accepted continuation children could not transfer terminal delivery");
     });
 
     it("yield with async started tool — diagnostic suppressed", async () => {
@@ -145,12 +268,19 @@ describe("sessions_yield orchestration", () => {
       expect(result.meta.yielded).toBe(true);
     });
 
-    it("yield with runtime continuation — diagnostic suppressed", async () => {
+    it("preserves runtime continuation when a non-announcing collector was also accepted", async () => {
       mockedRunEmbeddedAttempt.mockResolvedValueOnce(
         makeAttemptResult({
           yieldDetected: true,
           assistantTexts: [],
           runtimeContinuationStarted: true,
+          acceptedSessionSpawns: [
+            {
+              runId: "collector-run",
+              childSessionKey: "agent:main:subagent:collector",
+              expectsCompletionMessage: false,
+            },
+          ],
         }),
       );
 
@@ -163,6 +293,7 @@ describe("sessions_yield orchestration", () => {
       expect(result.meta.stopReason).toBe("end_turn");
       expect(result.meta.yielded).toBe(true);
       expect(result.meta.replayInvalid).toBe(true);
+      expect(result.requesterContinuationSettled).toBeUndefined();
     });
   });
 

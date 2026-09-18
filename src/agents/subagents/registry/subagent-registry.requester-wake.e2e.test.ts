@@ -661,8 +661,8 @@ describe("requester settle wake product flow", () => {
           );
           const harnessAttempt = vi.spyOn(harnessSelection, "runAgentHarnessAttempt");
           try {
-            // Harness execution is synthetic; backend settlement and terminal
-            // projection are real. Placement cannot repair this path afterward.
+            // Harness execution is synthetic; terminal projection and logical
+            // requester settlement are real. Placement cannot repair this path afterward.
             harnessAttempt.mockResolvedValue(
               makeEmbeddedRunnerAttempt({
                 agentHarnessId: "codex",
@@ -709,6 +709,15 @@ describe("requester settle wake product flow", () => {
               thinkLevel: "off",
             });
             expect(harnessAttempt).toHaveBeenCalledTimes(1);
+            const terminal = await resolveEmbeddedRunTerminal(
+              makeTerminalInput({ attempt, runParams, agentHarnessId: "codex" }),
+            );
+            expect(terminal.action).toBe("complete");
+            if (terminal.action !== "complete") {
+              throw new Error("yielded native requester did not complete its turn");
+            }
+            const { settleRequesterRun } = await import("../../requester-run-settlement.js");
+            settleRequesterRun(runParams, terminal.result, admission.assertSourceCurrent);
             for (const child of accepted) {
               expect(registry.getSubagentRunByRunId(child.runId)).toMatchObject({
                 requesterTurnRunId: undefined,
@@ -718,13 +727,6 @@ describe("requester settle wake product flow", () => {
                   batchRunIds: accepted.map((spawn) => spawn.runId).toSorted(),
                 },
               });
-            }
-            const terminal = await resolveEmbeddedRunTerminal(
-              makeTerminalInput({ attempt, runParams, agentHarnessId: "codex" }),
-            );
-            expect(terminal.action).toBe("complete");
-            if (terminal.action !== "complete") {
-              throw new Error("yielded native requester did not complete its turn");
             }
             expect(terminal.result.meta.yielded).toBe(true);
             expect(terminal.result.requesterContinuationSettled).toBe(true);

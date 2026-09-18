@@ -58,6 +58,7 @@ import {
   acquireReadOnlyPreparedModelRuntime,
 } from "../prepared-model-runtime.js";
 import { resolveProjectKey } from "../project-memory-scope.js";
+import { settleRequesterRun } from "../requester-run-settlement.js";
 import {
   applyAgentRunSessionTargetIdentity,
   resolveAgentRunSessionTarget,
@@ -694,6 +695,12 @@ async function runEmbeddedAgentInternal(
           }
         }
         refresh.mergeTerminalReceipt(result);
+        if (result.meta.executionTrace?.runner !== "cli") {
+          settleRequesterRun(params, result, () => {
+            throwIfAborted();
+            params.preparedRunAdmission?.assertSourceCurrent();
+          });
+        }
         const error = result.meta.error?.message ?? terminal?.getDeferredError();
         terminal?.emit(error ? "error" : "end", error ? new Error(error) : result, {
           ...resolveAgentLifecycleTerminalMetadata(result.meta),
