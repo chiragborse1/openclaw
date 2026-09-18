@@ -1,16 +1,22 @@
+import { performance } from "node:perf_hooks";
+import { setTimeout as delay } from "node:timers/promises";
 import { threadId, type MessagePort, type Worker } from "node:worker_threads";
 import {
   createSqliteLifecycleAggregateError,
+  runWithSqliteCoordinator,
   SqliteCoordinatorError,
 } from "../../infra/sqlite-coordinator.js";
 import type { SqliteWorkerStateContext } from "../../infra/sqlite-worker-state-context.js";
 import {
+  acquireStateDatabaseCoordinator,
   attachStateLifecycleDelegate,
+  StateDatabaseCoordinatorContentionError,
   tryCreateStateLifecycleDelegate,
   withStateDatabaseCoordinatorRuntimeDirectory,
 } from "../../infra/state-database-coordinator.js";
 import type { OpenClawAgentDatabaseOptions } from "../../state/openclaw-agent-db.js";
 import { registerOpenClawStateDatabaseAsyncResource } from "../../state/openclaw-state-db-cache.js";
+import { OPENCLAW_SQLITE_BUSY_TIMEOUT_MS } from "../../state/openclaw-state-db-contract.js";
 import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
 import type { OpenClawStateWorkerContext } from "../../state/openclaw-state-worker-context.types.js";
 
@@ -20,6 +26,41 @@ export type SqliteMutationWorkerCoordination = {
   stateContext: SqliteWorkerStateContext;
   stateLifecycle?: MessagePort;
 };
+
+async function prepareLifecycleDelegate(context: OpenClawStateWorkerContext, actorId: string) {
+  const deadline = performance.now() + OPENCLAW_SQLITE_BUSY_TIMEOUT_MS;
+  return withStateDatabaseCoordinatorRuntimeDirectory(context.coordinatorRuntime, async () => {
+    while (true) {
+      try {
+        // Sibling agent workers borrow one parent owner rather than racing native
+        // lifecycle locks while claiming their separate shared-state leases.
+        return runWithSqliteCoordinator(
+          acquireStateDatabaseCoordinator({
+            databasePath: context.admission.databasePath,
+            busyTimeoutMs: 0,
+          }),
+          "SQLite mutation Worker lifecycle admission",
+          () =>
+            tryCreateStateLifecycleDelegate({
+              databasePath: context.admission.databasePath,
+              actorId,
+            }),
+        );
+      } catch (error) {
+        const remaining = deadline - performance.now();
+        if (
+          !(error instanceof StateDatabaseCoordinatorContentionError) ||
+          error.family !== "state-lifecycle" ||
+          remaining <= 0
+        ) {
+          throw error;
+        }
+        // Retry only custody acquisition, before dispatch or any mutation.
+        await delay(Math.min(25, remaining));
+      }
+    }
+  });
+}
 
 /** The original request owns this pin until its result or native exit is settled. */
 export async function withSqliteMutationWorkerCoordination<T>(
@@ -35,9 +76,7 @@ export async function withSqliteMutationWorkerCoordination<T>(
   worker.on("error", preparingError);
   let outcome: { value: T } | { error: unknown };
   try {
-    delegate = withStateDatabaseCoordinatorRuntimeDirectory(context.coordinatorRuntime, () =>
-      tryCreateStateLifecycleDelegate({ databasePath: context.admission.databasePath, actorId }),
-    );
+    delegate = await prepareLifecycleDelegate(context, actorId);
     outcome = {
       value: await run({
         actorId,

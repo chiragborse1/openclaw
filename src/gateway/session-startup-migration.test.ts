@@ -9,6 +9,7 @@ import {
   persistSessionTranscriptTurn,
   upsertSessionEntryCore,
 } from "../config/sessions/session-accessor.js";
+import * as archiveWorker from "../config/sessions/session-accessor.sqlite-archive.js";
 import {
   resolveSqliteReadScope,
   toDatabaseOptions,
@@ -49,6 +50,32 @@ function makeLog() {
 }
 
 describe("runStartupSessionMigration", () => {
+  it("does not start canonical validation workers for a cold empty fleet on either boot", async () => {
+    const stateDir = tempDirs.make("openclaw-empty-fleet-startup-");
+    const env = { ...process.env, OPENCLAW_STATE_DIR: stateDir };
+    const agentIds = ["fleet-a", "fleet-b", "fleet-c", "fleet-d"];
+    const cfg: OpenClawConfig = {
+      agents: {
+        ownership: "explicit",
+        entries: Object.fromEntries(agentIds.map((id) => [id, {}])),
+      },
+    };
+    for (const agentId of agentIds) {
+      openOpenClawAgentDatabase({ agentId, env });
+    }
+    const started = vi.spyOn(archiveWorker, "createSqliteTranscriptArchiveWorker");
+    try {
+      for (let boot = 0; boot < 2; boot++) {
+        await closeOpenClawAgentDatabasesAsync();
+        closeOpenClawAgentDatabasesForTest();
+        await runStartupSessionMigration({ cfg, env, log: makeLog() });
+        expect(started).not.toHaveBeenCalled();
+      }
+    } finally {
+      started.mockRestore();
+    }
+  });
+
   it.each(["successful", "failed"] as const)(
     "hands the cold maintenance connection directly to %s reconciliation",
     async (outcome) => {

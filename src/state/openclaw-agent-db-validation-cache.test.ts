@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
+import { recordOpenClawAgentCanonicalValidation } from "./openclaw-agent-canonical-validation-receipt.js";
 import type {
   OpenClawAgentDatabase,
   OpenClawAgentDatabaseOptions,
@@ -8,6 +9,7 @@ import type {
 import { openOpenClawAgentDatabaseReadOnly } from "./openclaw-agent-db-readonly-open.js";
 import {
   adoptOpenClawAgentDatabaseValidation,
+  clearOpenClawAgentDatabaseValidationCache,
   getOpenClawAgentDatabaseValidation,
   hasOpenClawAgentCanonicalValidation,
   invalidateOpenClawAgentDatabaseValidation,
@@ -45,6 +47,34 @@ async function withReceiptFixture(
 }
 
 describe("canonical proof on physical database validation", () => {
+  it("does not publish an uncommitted durable receipt into a cold reader cache", async () => {
+    await withReceiptFixture(true, (database, options) => {
+      expect(() =>
+        runOpenClawAgentWriteTransaction((current) => {
+          recordOpenClawAgentCanonicalValidation(current);
+          clearOpenClawAgentDatabaseValidationCache(current.path);
+          expect(hasOpenClawAgentCanonicalValidation(current)).toBe(false);
+          throw new Error("rollback durable receipt");
+        }, options),
+      ).toThrow("rollback durable receipt");
+      expect(hasOpenClawAgentCanonicalValidation(database)).toBe(false);
+      expect(database.db.prepare("SELECT canonical_ready FROM session_key_contract").get()).toEqual(
+        { canonical_ready: null },
+      );
+    });
+  });
+
+  it("does not revive revoked canonical proof when physical integrity is verified again", async () => {
+    await withReceiptFixture(true, (database, options) => {
+      runOpenClawAgentWriteTransaction(recordOpenClawAgentCanonicalValidation, options);
+      expect(markOpenClawAgentCanonicalValidation(database)).toBe(true);
+      invalidateOpenClawAgentDatabaseValidation(database.path);
+      setOpenClawAgentDatabaseValidation(database);
+      expect(getOpenClawAgentDatabaseValidation(database)).toBeDefined();
+      expect(hasOpenClawAgentCanonicalValidation(database)).toBe(false);
+    });
+  });
+
   it.each([false, true])(
     "initializes readiness from committed emptiness (populated: %s)",
     async (populated) => {

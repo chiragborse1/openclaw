@@ -10,6 +10,7 @@ import { retainOpenClawAgentDatabaseReadOnly } from "../../state/openclaw-agent-
 import {
   getOpenClawAgentDatabaseValidation,
   hasOpenClawAgentCanonicalValidation,
+  isOpenClawAgentCanonicalStoreEmpty,
   markOpenClawAgentCanonicalValidation,
 } from "../../state/openclaw-agent-db-validation-cache.js";
 import {
@@ -52,6 +53,11 @@ export async function certifySessionCanonicalValidationPending(
   let oversizedRows = 0;
   try {
     let initializeCanonicalValidation = !hasOpenClawAgentCanonicalValidation(database);
+    // An empty source has no rows to certify. Leave first writable admission's
+    // integrity receipt unclaimed; a clean pending table alone is insufficient.
+    if (initializeCanonicalValidation && isOpenClawAgentCanonicalStoreEmpty(database)) {
+      return;
+    }
     if (!initializeCanonicalValidation && !hasPendingCanonicalSessionValidation(database)) {
       return;
     }
