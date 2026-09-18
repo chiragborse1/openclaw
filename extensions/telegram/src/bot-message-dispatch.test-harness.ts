@@ -1,6 +1,7 @@
 import { expectDefined } from "@openclaw/normalization-core";
 // Telegram tests cover bot message dispatch plugin behavior.
 import type { Bot } from "grammy";
+import { projectAgentToolActivity } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { resetPluginStateStoreForTests } from "openclaw/plugin-sdk/plugin-state-test-runtime";
 import { afterEach, beforeAll, beforeEach, describe, expect, vi } from "vitest";
 import { resolveAutoTopicLabelConfig as resolveAutoTopicLabelConfigRuntime } from "./auto-topic-label-config.js";
@@ -20,6 +21,22 @@ export type DispatchReplyWithBufferedBlockDispatcherArgs = Parameters<
   TelegramBotDeps["dispatchReplyWithBufferedBlockDispatcher"]
 >[0];
 
+type ReplyOptions = DispatchReplyWithBufferedBlockDispatcherArgs["replyOptions"];
+type ToolStart = Parameters<NonNullable<NonNullable<ReplyOptions>["onToolStart"]>>[0] & {
+  name: string;
+  toolCallId: string;
+};
+
+/** Emit the producer's prepared item before the independent raw tool callback. */
+export async function emitToolStart(options: ReplyOptions, payload: ToolStart) {
+  const item = projectAgentToolActivity({
+    ...payload,
+    phase: payload.phase === "update" ? "update" : "start",
+  });
+  await options?.onItemEvent?.(item);
+  return await options?.onToolStart?.(payload);
+}
+
 export function requireInvocationOrder(
   mock: { mock: { invocationCallOrder: number[] } },
   index: number,
@@ -27,6 +44,12 @@ export function requireInvocationOrder(
 ): number {
   return expectDefined(mock.mock.invocationCallOrder[index], context);
 }
+
+type InboundDeliveryForTest =
+  import("openclaw/plugin-sdk/channel-inbound").ChannelInboundTurnPlan<"provider_message_sending">["delivery"];
+const observeInboundDeliveryHoisted = vi.hoisted(() =>
+  vi.fn<(delivery: InboundDeliveryForTest) => void>(),
+);
 
 const createTelegramDraftStreamHoisted = vi.hoisted(() => vi.fn());
 const dispatchReplyWithBufferedBlockDispatcherHoisted = vi.hoisted(() =>
@@ -114,6 +137,7 @@ const resolveChunkModeHoisted = vi.hoisted(() => vi.fn(() => undefined));
 const resolveMarkdownTableModeHoisted = vi.hoisted(() => vi.fn(() => "preserve"));
 const getGlobalHookRunnerHoisted = vi.hoisted(() => vi.fn());
 
+export const observeInboundDelivery = observeInboundDeliveryHoisted;
 export const createTelegramDraftStream = createTelegramDraftStreamHoisted;
 export const dispatchReplyWithBufferedBlockDispatcher =
   dispatchReplyWithBufferedBlockDispatcherHoisted;
@@ -208,6 +232,7 @@ vi.mock("openclaw/plugin-sdk/channel-inbound", async (importOriginal) => {
       }
       const delivery =
         resolved.delivery as unknown as import("openclaw/plugin-sdk/channel-inbound").ChannelInboundTurnPlan<"provider_message_sending">["delivery"];
+      observeInboundDeliveryHoisted(delivery);
       const testTurn = (params.raw as { turn: TestTurn }).turn;
       const result = await actual.runPreparedInboundReply({
         channel: resolved.channel,
@@ -355,6 +380,7 @@ function resetTelegramDispatchTestState() {
   resetPluginStateStoreForTests({ closeDatabase: false });
   setTelegramPluginStateRuntimeForTests();
   resetTelegramReplyFenceForTests();
+  observeInboundDelivery.mockReset();
   createTelegramDraftStream.mockReset();
   dispatchReplyWithBufferedBlockDispatcher.mockReset();
   deliverReplies.mockReset();

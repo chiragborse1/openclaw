@@ -320,6 +320,7 @@ const enSettings = {
     login: {
       action: "Connect provider",
       title: "Connect a provider",
+      noOptions: "No account connection methods are available.",
       description: "Save credentials for this agent. Choose the active model separately.",
       done: "Provider credentials saved.",
       finishing: "Credentials are being saved. Wait for the result.",
@@ -341,6 +342,7 @@ const enSettings = {
       apiKey: "API key",
       denied: "Credentials rejected",
       configured: "Credentials configured",
+      modelsUnavailable: "Models unavailable",
     },
     expiresIn: "Credential expires in {time}",
     models: "{count} models",
@@ -366,6 +368,8 @@ const enSettings = {
     profiles: {
       title: "Provider profiles",
       accountOne: "1 account",
+      account: "Account {number}",
+      details: "Details",
       accounts: "{count} accounts",
       reorderHint: "Drag to set your preferred account order.",
       reorder: "Reorder {account}, position {position}",
@@ -579,6 +583,9 @@ const enSettings = {
       permissionsIntro: "macOS access for notifications, capture, voice, and device context.",
       permissionsIntroIos: "Device access for notifications, capture, voice, and personal data.",
       app: "App",
+      nativeExperience: "Native experience (Experimental)",
+      nativeExperienceHint:
+        "Use native Mac views for chat and navigation. When off, use the Web experience. Settings always open here.",
       appearance: "Appearance",
       appearanceModes: { system: "System", light: "Light", dark: "Dark" },
       notificationsEnabled: "Notifications",
@@ -1000,7 +1007,7 @@ const enSettings = {
         "Enter a CSS width such as 960px, 82%, min(1280px, 82%), or calc(100% - 2rem).",
       collapseTaskProgress: "Collapse task progress by default",
       collapseTaskProgressHint:
-        "Keep task progress collapsed while work is active, then expand it at the bottom when the response finishes. Manual changes last for the current task.",
+        "Start task progress collapsed. It can expand when the response finishes if you are at the end of the chat. A manual close keeps it collapsed for that session.",
     },
     sessionSources: {
       title: "Session sources",

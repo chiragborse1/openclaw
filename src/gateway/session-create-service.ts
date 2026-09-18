@@ -30,6 +30,7 @@ import type { ModelCatalogSnapshot } from "../agents/model-catalog.types.js";
 import { resolveModelContextWindowProfile } from "../agents/model-context-window.js";
 import { splitTrailingAuthProfile } from "../agents/model-ref-profile.js";
 import {
+  type ModelRef,
   resolveDefaultModelForAgent,
   resolveSubagentConfiguredModelSelection,
 } from "../agents/model-selection.js";
@@ -82,7 +83,6 @@ import {
   isAgentHarnessSessionKey,
   isAgentHarnessSessionKeyOwnedBy,
 } from "../sessions/agent-harness-session-key.js";
-import { shouldPreserveSessionAuthProfileOverride } from "../sessions/auth-profile-preservation.js";
 import { isModelSelectionLocked } from "../sessions/model-overrides.js";
 import {
   isSessionWorkAdmissionActive,
@@ -93,6 +93,7 @@ import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 import { isUserModelAuthProfileId } from "../state/user-model-account-id.js";
 import { isUserModelAuthProfileOwner } from "../state/user-model-accounts.js";
 import { normalizeSessionDeliveryState } from "../utils/delivery-context.shared.js";
+import type { AgentRuntimeSpawnModelAutoSelection } from "./agent-runtime-session-spawn-context.js";
 import type {
   ModelAccountConnectAction,
   UserModelAccountSelection,
@@ -107,11 +108,11 @@ import {
 import {
   prepareSessionPatchRuntimeSelection,
   refreshSessionPatchQueuedSelection,
-  resolveSessionPatchModelSelection,
 } from "./server-methods/sessions-patch-model-selection.js";
 import type { GatewayOperatorRoleActor } from "./server-methods/shared-types.js";
 import { buildForkedGatewaySessionEntry } from "./session-create-fork-entry.js";
 import { resolveSessionCreateModelSelection } from "./session-create-model-selection.js";
+import { existingSessionSelectionWouldChange } from "./session-create-selection-guard.js";
 import {
   type PreparedGatewaySessionLifecycle,
   type PrepareGatewaySessionLifecycle,
@@ -139,120 +140,6 @@ const loadSessionLifecycleRuntime = createLazyRuntimeModule(
 const loadSessionAuthRuntime = createLazyRuntimeModule(
   () => import("../agents/auth-profiles/session-override.js"),
 );
-
-async function existingSessionSelectionWouldChange(params: {
-  agentId: string;
-  cfg: OpenClawConfig;
-  catalogModel?: string;
-  defaultModel: string;
-  defaultProvider: string;
-  existingEntry: SessionEntry;
-  loadGatewayModelCatalogSnapshot?: () => Promise<ModelCatalogSnapshot>;
-  requestedModel?: string;
-  requestedAgentRuntime?: string;
-  requestedContextWindow?: string;
-  requestedFastMode?: FastMode;
-  requestedThinkingLevel?: string;
-  subagentModelHint?: string;
-}): Promise<boolean> {
-  if (params.catalogModel) {
-    // Public catalog creates cannot include a key, and the service rejects
-    // catalog targets for existing rows. If a trusted caller reaches this,
-    // keep catalog-owned model/runtime adoption fail-closed.
-    return true;
-  }
-  if (
-    params.requestedAgentRuntime !== undefined &&
-    params.requestedAgentRuntime !== params.existingEntry.agentRuntimeOverride
-  ) {
-    return true;
-  }
-  const requestedThinkingLevel = normalizeOptionalString(params.requestedThinkingLevel);
-  const requestedContextWindow = normalizeOptionalString(params.requestedContextWindow);
-  if (
-    params.requestedFastMode !== undefined &&
-    params.requestedFastMode !== params.existingEntry.fastMode
-  ) {
-    return true;
-  }
-  if (
-    requestedContextWindow &&
-    requestedContextWindow !== normalizeOptionalString(params.existingEntry.contextWindow)
-  ) {
-    return true;
-  }
-  if (
-    requestedThinkingLevel &&
-    requestedThinkingLevel !== normalizeOptionalString(params.existingEntry.thinkingLevel)
-  ) {
-    return true;
-  }
-  const requestedModel = normalizeOptionalString(params.requestedModel);
-  if (!requestedModel) {
-    return false;
-  }
-  if (!params.loadGatewayModelCatalogSnapshot) {
-    // Public/TUI model selection paths provide the catalog loader used by the
-    // patch resolver. Without it, an existing-row model request cannot prove
-    // it is a no-op, so non-admin callers must not reach the mutation path.
-    return true;
-  }
-  const catalog = await params.loadGatewayModelCatalogSnapshot();
-  const resolved = resolveSessionPatchModelSelection({
-    cfg: params.cfg,
-    agentId: params.agentId,
-    catalog: catalog.entries,
-    raw: requestedModel,
-    defaultProvider: params.defaultProvider,
-    defaultModel: params.defaultModel,
-    subagentModelHint: params.subagentModelHint,
-  });
-  if (!resolved.ok) {
-    // Admin callers still receive the precise model error from sessions.patch.
-    // Non-admin existing-row creates fail closed before that mutation path.
-    return true;
-  }
-  let existingProvider =
-    normalizeOptionalString(params.existingEntry.providerOverride) ?? params.defaultProvider;
-  let existingModel =
-    normalizeOptionalString(params.existingEntry.modelOverride) ?? params.defaultModel;
-  if (!normalizeOptionalString(params.existingEntry.modelOverride) && params.subagentModelHint) {
-    const resolvedSubagentDefault = resolveSessionPatchModelSelection({
-      cfg: params.cfg,
-      agentId: params.agentId,
-      catalog: catalog.entries,
-      raw: params.subagentModelHint,
-      defaultProvider: params.defaultProvider,
-      defaultModel: params.defaultModel,
-    });
-    if (!resolvedSubagentDefault.ok) {
-      return true;
-    }
-    if (!normalizeOptionalString(params.existingEntry.providerOverride)) {
-      existingProvider = resolvedSubagentDefault.provider;
-    }
-    existingModel = resolvedSubagentDefault.model;
-  }
-  const existingProfile = normalizeOptionalString(params.existingEntry.authProfileOverride);
-  const requestedProfile = normalizeOptionalString(resolved.profile);
-  const profileWouldChange =
-    requestedProfile !== undefined
-      ? requestedProfile !== existingProfile
-      : existingProfile !== undefined &&
-        !shouldPreserveSessionAuthProfileOverride({
-          cfg: params.cfg,
-          agentDir: resolveAgentDir(params.cfg, params.agentId),
-          currentProvider:
-            params.existingEntry.providerOverride ??
-            params.existingEntry.modelProvider ??
-            params.defaultProvider,
-          entry: params.existingEntry,
-          provider: resolved.provider,
-        });
-  return (
-    resolved.provider !== existingProvider || resolved.model !== existingModel || profileWouldChange
-  );
-}
 
 export function buildDashboardSessionKey(
   agentId: string,
@@ -358,6 +245,8 @@ export async function createGatewaySession(params: {
   forkFrom?: "last-completed";
   /** Live requester capability for an agent's current-transcript fork; never a wire parameter. */
   activeParentFork?: { requesterSessionKey: string; assertCurrent: () => void };
+  /** Live spawn-owned selection; public model inputs remain raw. */
+  preparedModelSelection?: { ref: ModelRef; assertCurrent: () => void };
   /**
    * Controls whether a distinct child terminates its parent. Omission preserves
    * the legacy rollover; callers use `false` for a parallel child.
@@ -385,6 +274,8 @@ export async function createGatewaySession(params: {
     actor?: SessionCreatedActor;
     sandbox?: "required";
     skillLibrarySelections?: import("../../packages/gateway-protocol/src/schema/skill-library.js").SkillLibrarySelection[];
+    /** Trusted config-resolved spawn model provenance for the `model` field. */
+    spawnModelAutoSelection?: AgentRuntimeSpawnModelAutoSelection;
   };
   /** Exact harness namespace authorized by the scoped plugin runtime. */
   authorizedAgentHarnessId?: string;
@@ -430,6 +321,7 @@ export async function createGatewaySession(params: {
     personalModelSelection ||
     personalAccountDefaults ||
     params.activeParentFork ||
+    params.preparedModelSelection ||
     params.agentRuntime !== undefined
       ? () => {
           params.commitGuard?.();
@@ -438,6 +330,7 @@ export async function createGatewaySession(params: {
             throw new Error(runtimeError.message);
           }
           params.activeParentFork?.assertCurrent();
+          params.preparedModelSelection?.assertCurrent();
           personalModelSelection?.assertCurrent();
           personalAccountDefaults?.assertCurrent();
           if (
@@ -1089,6 +982,7 @@ export async function createGatewaySession(params: {
       params.catalogTarget ??
         (params.model ? { model: params.model, agentRuntime: params.agentRuntime } : undefined),
       currentParentSessionEntry,
+      params.preparedModelSelection?.ref,
     );
     commitGuard?.();
     const preparationResult = params.prepareLifecycle
@@ -1106,6 +1000,7 @@ export async function createGatewaySession(params: {
       return { ok: false, error: preparationResult.error };
     }
     preparedLifecycle = preparationResult?.value;
+    const pendingWorktree = preparedLifecycle?.pendingWorktree ?? params.pendingWorktree;
     const spawnedCwd = normalizeOptionalString(
       preparedLifecycle?.spawnedCwd ?? params.spawnedCwd ?? inheritedWorkspace?.spawnedCwd,
     );
@@ -1180,7 +1075,7 @@ export async function createGatewaySession(params: {
             ),
           };
         }
-        if ((pendingProjectGitUrl || params.pendingWorktree) && existingEntry !== undefined) {
+        if ((pendingProjectGitUrl || pendingWorktree) && existingEntry !== undefined) {
           return {
             ok: false,
             error: errorShape(
@@ -1300,10 +1195,16 @@ export async function createGatewaySession(params: {
             : undefined,
           authorizedAgentHarnessId: params.authorizedAgentHarnessId,
           personalModelSelection: params.personalModelSelection,
+          preparedModelSelection: params.preparedModelSelection?.ref,
         });
         if (!patched.ok) {
           return patched;
         }
+        // Bind automatic intent before using the patch owner's canonical selection.
+        const spawnModelAutoSelection =
+          params.creation?.spawnModelAutoSelection?.model === requestedModel
+            ? params.creation?.spawnModelAutoSelection
+            : undefined;
         if (
           requestedToolOverrides &&
           existingEntry !== undefined &&
@@ -1358,6 +1259,17 @@ export async function createGatewaySession(params: {
           ...patched.entry,
           ...inheritedWorkspace,
           ...(createdNewEntry && displayName ? { displayName } : {}),
+          ...(createdNewEntry && spawnModelAutoSelection
+            ? {
+                modelOverrideSource: "auto" as const,
+                ...(spawnModelAutoSelection.hasFallbackOrigin
+                  ? {
+                      modelOverrideFallbackOriginProvider: patched.entry.providerOverride,
+                      modelOverrideFallbackOriginModel: patched.entry.modelOverride,
+                    }
+                  : {}),
+              }
+            : {}),
           // New rows must expose the same canonical delivery shape to callbacks
           // that the SQLite writer persists, or guarded finalization sees its own write as drift.
           ...(existingEntry === undefined && patched.entry.delivery === undefined
@@ -1376,9 +1288,7 @@ export async function createGatewaySession(params: {
           ...(params.visibility && createdNewEntry ? { visibility: params.visibility } : {}),
           ...(projectId && createdNewEntry ? { projectId } : {}),
           ...(pendingProjectGitUrl && createdNewEntry ? { pendingProjectGitUrl } : {}),
-          ...(params.pendingWorktree && createdNewEntry
-            ? { pendingWorktree: params.pendingWorktree }
-            : {}),
+          ...(pendingWorktree && createdNewEntry ? { pendingWorktree } : {}),
           ...(catalogResolvedModel && catalogAgentRuntime
             ? {
                 providerOverride: catalogResolvedModel.provider,
@@ -1582,18 +1492,29 @@ export async function createGatewaySession(params: {
           : resolvedForkMaxTokens;
         // The storage owner selects one source for both size admission and copying,
         // so an active tail cannot make a smaller stable prefix fail the cap.
-        const forkResult = await forkSessionFromParentWithDecision({
-          parentEntry: currentParentSessionEntry,
-          agentId: parentSessionTarget.agentId,
-          ...(commitGuard ? { commitGuard } : {}),
-          parentSessionKey: forkParentSessionKey,
-          sessionKey: target.canonicalKey,
-          storePath: parentSessionTarget.storePath,
-          ...(forkMaxTokens ? { maxTokens: forkMaxTokens } : {}),
-          // Keep the fork transcript owned by the child store across agent boundaries.
-          targetStorePath: target.storePath,
-          ...(params.forkFrom ? { forkFrom: params.forkFrom } : {}),
-        });
+        const forkFromParent = async (assertSourceCurrent?: () => void) =>
+          await forkSessionFromParentWithDecision({
+            parentEntry: currentParentSessionEntry,
+            agentId: parentSessionTarget.agentId,
+            ...(commitGuard || assertSourceCurrent
+              ? {
+                  commitGuard: () => {
+                    commitGuard?.();
+                    assertSourceCurrent?.();
+                  },
+                }
+              : {}),
+            parentSessionKey: forkParentSessionKey,
+            sessionKey: target.canonicalKey,
+            storePath: parentSessionTarget.storePath,
+            ...(forkMaxTokens ? { maxTokens: forkMaxTokens } : {}),
+            // Keep the fork transcript owned by the child store across agent boundaries.
+            targetStorePath: target.storePath,
+            ...(params.forkFrom ? { forkFrom: params.forkFrom } : {}),
+          });
+        const forkResult = preparedLifecycle?.withCommit
+          ? await preparedLifecycle.withCommit(forkFromParent)
+          : await forkFromParent();
         if (forkResult.status === "too-large") {
           return {
             ok: false,
@@ -1631,6 +1552,10 @@ export async function createGatewaySession(params: {
             }
           : {}),
         ...(commitGuard ? { commitGuard } : {}),
+        ...(preparedLifecycle?.withCommit ? { withCommit: preparedLifecycle.withCommit } : {}),
+        onLifecycleCommitted: () => {
+          lifecyclePreparationCommitted = true;
+        },
         ...(runtimeCwd ? { cwd: runtimeCwd } : {}),
       },
     );
@@ -1653,7 +1578,6 @@ export async function createGatewaySession(params: {
       storePath: target.storePath,
       isNew: createdNewEntry,
     };
-    lifecyclePreparationCommitted = true;
     if (!createdNewEntry && params.agentRuntime !== undefined) {
       refreshSessionPatchQueuedSelection({
         cfg: params.cfg,

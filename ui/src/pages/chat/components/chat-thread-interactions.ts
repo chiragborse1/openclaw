@@ -34,14 +34,15 @@ import type { TurnRecapWatch } from "../chat-progress.ts";
 import { resetChatThreadState } from "../chat-thread.ts";
 import type { PluginToolIcons } from "../chat-tool-icon-controller.ts";
 import type { LinkFaviconFetcher } from "../link-favicon-loader.ts";
-import type { RealtimeTalkConversationEntry } from "../realtime-talk-conversation.ts";
 import type { ChatRunUiStatus } from "../run-lifecycle.ts";
+import type { RealtimeTalkConversationEntry } from "../talk/conversation.ts";
 import type { CompactionStatus, RunOutputUsage } from "../tool-stream-contract.ts";
 import type { AsyncQuestionDraft } from "./chat-async-question.ts";
 import type { ChatAttachmentControlsProps } from "./chat-attachment-controls.types.ts";
 import type { BackgroundTasksProps } from "./chat-background-tasks.types.ts";
 import { resolveChatContextCopy, usesNativeContextMenu } from "./chat-context-copy.ts";
 import type { ChatHistoryBoundaryProps } from "./chat-history-boundary.ts";
+import { isConfirmedActionPopoverFocused } from "./chat-message-confirmation.ts";
 import type { MessageActionDetails } from "./chat-message-markdown.ts";
 import type { ArtifactDownloadResolver } from "./chat-message-media.ts";
 import type { ChatSendStatusActions } from "./chat-message-send-status.ts";
@@ -50,7 +51,11 @@ import {
   openChatRewindConfirmation,
   type MessageReplyTarget,
 } from "./chat-message.ts";
-import { handleChatSelectionPointerUp, removeChatSelectionPopup } from "./chat-selection-popup.ts";
+import {
+  handleChatSelectionPointerUp,
+  isChatSelectionPopupFocused,
+  removeChatSelectionPopup,
+} from "./chat-selection-popup.ts";
 import type { SidebarContent, SidebarFullMessageLoader } from "./chat-sidebar.ts";
 
 registerChatMessageMetadataEnglish();
@@ -217,6 +222,18 @@ export function getTranscriptState(paneId: string): ChatThreadState {
   return state;
 }
 
+export function isThreadPresentationFocused(paneId: string, owner: HTMLElement): boolean {
+  const menu = activeReplyContextMenu?.paneId === paneId ? activeReplyContextMenu.element : null;
+  return (
+    owner.contains(owner.ownerDocument.activeElement) ||
+    isChatSelectionPopupFocused(paneId) ||
+    isConfirmedActionPopoverFocused(owner) ||
+    Boolean(
+      menu && (menu.contains(document.activeElement) || isConfirmedActionPopoverFocused(menu)),
+    )
+  );
+}
+
 export function dismissThreadPortals(paneId?: string, owner?: ParentNode): void {
   removeReplyContextMenu(paneId);
   if (owner) {
@@ -224,7 +241,7 @@ export function dismissThreadPortals(paneId?: string, owner?: ParentNode): void 
   }
   // The selection popup is body-portaled; pane teardown/route changes must
   // drop it so it cannot outlive the render that owns its callbacks.
-  removeChatSelectionPopup();
+  removeChatSelectionPopup(paneId);
 }
 
 export function resetTranscriptSession(paneId: string, owner?: ParentNode): void {
@@ -439,6 +456,7 @@ export function handleTranscriptPointerUp(event: PointerEvent, props: Transcript
     return;
   }
   handleChatSelectionPointerUp(event, {
+    paneId: props.paneId,
     onAddToChat: props.onAddToChat,
     onAskSideChat: (selection) => {
       const question = buildCompanionQuestionPrefill(selection);

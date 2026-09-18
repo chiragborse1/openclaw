@@ -15,9 +15,11 @@ import { openClawStateDatabaseCache } from "./openclaw-state-db-cache.js";
 import type {
   OpenClawStateDatabaseOptions,
   OpenClawStateDatabase,
+  OpenClawStateSchemaReadAdmission,
 } from "./openclaw-state-db-contract.js";
-import { openDanglingWorkshopIndexReadAdmission } from "./openclaw-state-db-dangling-workshop-index.js";
+import { assertExistingOpenClawStateRuntimeSchema } from "./openclaw-state-db-existing-schema.js";
 import { openOpenClawStateReadConnection } from "./openclaw-state-db-read-connection.js";
+import { isExistingOpenClawStateSchema } from "./openclaw-state-db-schema-policy.js";
 import { assertSupportedStateSchemaVersion } from "./openclaw-state-db-schema-version.js";
 import { resolveOpenClawStateSqlitePath } from "./openclaw-state-db.paths.js";
 
@@ -41,6 +43,16 @@ const stateSnapshotReads = resolveGlobalSingleton(
       active: boolean;
     }>(),
 );
+
+/** Opaque identity for derived facts scoped to these owned private database bytes. */
+export function getActiveOpenClawStateDatabaseReadSnapshot(
+  options: OpenClawStateDatabaseOptions = {},
+): object | undefined {
+  const current = stateSnapshotReads.getStore();
+  return current?.active === true && current.path === resolveReadOnlyPath(options)
+    ? current
+    : undefined;
+}
 
 /** Resolve a composite read from one online snapshot without redirecting live writers. */
 export async function withOpenClawStateDatabaseReadSnapshot<T>(
@@ -180,7 +192,19 @@ export function hasOpenClawStateTablesBeyondStartupCheckpoint(db: DatabaseSync):
 }
 
 function resolveReadOnlyPath(options: OpenClawStateDatabaseOptions): string {
-  return path.resolve(options.path ?? resolveOpenClawStateSqlitePath(options.env ?? process.env));
+  const pathname = path.resolve(
+    options.path ?? resolveOpenClawStateSqlitePath(options.env ?? process.env),
+  );
+  isExistingOpenClawStateSchema(pathname);
+  return pathname;
+}
+
+function assertStateReadSchema(database: DatabaseSync, pathname: string): void {
+  if (isExistingOpenClawStateSchema(pathname, database)) {
+    assertExistingOpenClawStateRuntimeSchema(database, pathname);
+  } else {
+    assertSupportedStateSchemaVersion(database, pathname);
+  }
 }
 
 function existingPathOrUndefined(pathname: string): string | undefined {
@@ -215,18 +239,13 @@ function withOpenClawStateDatabaseReadOnlyIfOpen<T>(
     return { reused: false };
   }
   try {
-    const closeSchemaReadAdmission = openDanglingWorkshopIndexReadAdmission(opened.db);
-    try {
-      // Process-local terminal failures evict this handle. Persisted quarantine
-      // is checked on the next physical open so hot reads do not poll metadata.
-      // A newer build can migrate this file while the handle stays open, so the
-      // forward-compatibility gate still runs before any reused read.
-      assertSupportedStateSchemaVersion(opened.db, pathname);
-      observeOpenClawDatabaseMaintenanceResource(opened.db);
-      return { reused: true, value: operation(opened) };
-    } finally {
-      closeSchemaReadAdmission?.();
-    }
+    // Process-local terminal failures evict this handle. Persisted quarantine
+    // is checked on the next physical open so hot reads do not poll metadata.
+    // A newer build can migrate this file while the handle stays open, so the
+    // forward-compatibility gate still runs before any reused read.
+    assertStateReadSchema(opened.db, pathname);
+    observeOpenClawDatabaseMaintenanceResource(opened.db);
+    return { reused: true, value: operation(opened) };
   } catch (error) {
     openClawStateDatabaseCache.evictOpenClawStateDatabaseAfterCorruption(opened, error);
     throw error;
@@ -254,7 +273,7 @@ function withFreshOpenClawStateDatabaseReadOnly<T>(
       );
       readers.set(pathname, opened);
     }
-    assertSupportedStateSchemaVersion(opened.database.db, pathname);
+    assertStateReadSchema(opened.database.db, pathname);
     const result = operation(opened.database);
     if (isPromiseLike(result)) {
       throw new SqliteCoordinatorError("SQLite metadata snapshot read must remain synchronous");
@@ -272,46 +291,26 @@ function openOpenClawStateReadOnlyLocation(
   source: string | PreparedSqliteReadOnlyLocation,
 ) {
   const connection = openOpenClawStateReadConnection(pathname, source);
-  const { db } = connection.database;
-  let closeSchemaReadAdmission: (() => void) | undefined;
-  const close = () => {
-    const errors: unknown[] = [];
-    let closed = false;
-    try {
-      closeSchemaReadAdmission?.();
-    } catch (error) {
-      errors.push(error);
-    }
-    try {
-      closed = connection.close();
-    } catch (error) {
-      errors.push(error);
-    }
-    if (errors.length === 1) {
-      throw errors[0];
-    }
-    if (errors.length > 1) {
-      throw new AggregateError(errors, "Shared-state reader cleanup failed.");
-    }
-    return closed;
-  };
   try {
-    closeSchemaReadAdmission = openDanglingWorkshopIndexReadAdmission(db);
-    assertSupportedStateSchemaVersion(db, pathname);
+    assertStateReadSchema(connection.database.db, pathname);
   } catch (error) {
-    close();
+    connection.close();
     throw error;
   }
-  return { database: connection.database, close };
+  return connection;
 }
 
 function withOpenClawStateReadOnlyLocation<T>(
   operation: (database: OpenClawStateReadOnlyDatabase) => T,
   pathname: string,
   source: string | PreparedSqliteReadOnlyLocation,
+  openStateSchemaReadAdmission?: OpenClawStateSchemaReadAdmission,
 ): T {
-  const opened = openOpenClawStateReadOnlyLocation(pathname, source);
+  const opened = openOpenClawStateReadConnection(pathname, source);
+  let closeAdmission: (() => void) | undefined;
   try {
+    closeAdmission = openStateSchemaReadAdmission?.(opened.database.db);
+    assertStateReadSchema(opened.database.db, pathname);
     const result = operation(opened.database);
     const location = typeof source === "string" ? source : source.location;
     if (location === pathname && isPromiseLike(result)) {
@@ -319,7 +318,11 @@ function withOpenClawStateReadOnlyLocation<T>(
     }
     return result;
   } finally {
-    opened.close();
+    try {
+      closeAdmission?.();
+    } finally {
+      opened.close();
+    }
   }
 }
 
@@ -397,7 +400,15 @@ export function withExistingOpenClawStateDatabaseReadOnly<T>(
 export function withExistingOpenClawStateDatabaseArtifactPreservingReadOnly<T>(
   operation: (database: OpenClawStateReadOnlyDatabase) => T,
   options: OpenClawStateDatabaseOptions = {},
+  openStateSchemaReadAdmission?: OpenClawStateSchemaReadAdmission,
 ): T | undefined {
+  if (openStateSchemaReadAdmission) {
+    return withExistingOpenClawStateDatabaseCurrentReadOnly(
+      operation,
+      options,
+      openStateSchemaReadAdmission,
+    );
+  }
   return withArtifactPreservingStateReads(() =>
     withExistingOpenClawStateDatabaseReadOnly(operation, options),
   );
@@ -407,12 +418,16 @@ export function withExistingOpenClawStateDatabaseArtifactPreservingReadOnly<T>(
 export function withExistingOpenClawStateDatabaseCurrentReadOnly<T>(
   operation: (database: OpenClawStateReadOnlyDatabase) => T,
   options: OpenClawStateDatabaseOptions = {},
+  openStateSchemaReadAdmission?: OpenClawStateSchemaReadAdmission,
 ): T | undefined {
   return stateSnapshotReads.exit(() => {
     const pathname = resolveReadOnlyPath(options);
-    const reused = withOpenClawStateDatabaseReadOnlyIfOpen(operation, pathname);
-    if (reused.reused) {
-      return reused.value;
+    // Maintenance admission belongs to a fresh private reader, never a cached writer.
+    if (!openStateSchemaReadAdmission) {
+      const reused = withOpenClawStateDatabaseReadOnlyIfOpen(operation, pathname);
+      if (reused.reused) {
+        return reused.value;
+      }
     }
     if (existingPathOrUndefined(pathname) === undefined) {
       return undefined;
@@ -425,6 +440,7 @@ export function withExistingOpenClawStateDatabaseCurrentReadOnly<T>(
       operation,
       pathname,
       prepareSqliteReadOnlyLocationSync(pathname),
+      openStateSchemaReadAdmission,
     );
   });
 }

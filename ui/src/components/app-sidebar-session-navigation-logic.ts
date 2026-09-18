@@ -44,6 +44,7 @@ import type { ControlUiRegistration } from "../plugins/control-ui-capability.ts"
 import { sidebarPluginTabs } from "./app-sidebar-nav-menus.ts";
 import {
   SIDEBAR_SESSION_NO_ATTENTION,
+  summarizeSidebarSessionAttention,
   type SidebarRecentSession,
   type SidebarSessionSortMode,
   type SidebarSessionStatusFilter,
@@ -59,13 +60,17 @@ export function resolveSidebarHomeAttention(
   sessionKey: string,
   row: GatewaySessionRow | null,
 ) {
-  const known = attention
-    .knownSessionAttention()
-    .find((entry) => areUiSessionKeysEquivalent(entry.sessionKey, sessionKey));
-  return (
-    known?.attention ??
-    (row ? attention.resolveSessionAttention(row) : SIDEBAR_SESSION_NO_ATTENTION)
+  const known = summarizeSidebarSessionAttention(
+    attention
+      .knownSessionAttention()
+      .filter((entry) => areUiSessionKeysEquivalent(entry.sessionKey, sessionKey))
+      .map((entry) => entry.attention),
   );
+  return known.kind !== "none"
+    ? known
+    : row
+      ? attention.resolveSessionAttention(row)
+      : SIDEBAR_SESSION_NO_ATTENTION;
 }
 
 type SidebarSessionSortOptions = {
@@ -219,8 +224,7 @@ export function buildSidebarSessionNavigationState(input: {
       expandedParticipants: row.expandedParticipants,
       participantCount: row.participantCount,
       archivedBy: row.archivedBy,
-      // The sidebar's zone structure already says what forked from what;
-      // a "Subagent:" prefix on named threads is noise (other surfaces keep it).
+      // Parent attention attributes subagent failures with the worker's own label.
       label: resolveSessionDisplayName(row.key, row, { includeSubagentPrefix: false }),
       userLabel: row.label,
       renameValue: resolveSessionRenameValue(row),
@@ -288,7 +292,10 @@ export function buildSidebarSessionNavigationState(input: {
       endedAt: row.endedAt,
       runtimeMs: row.runtimeMs,
       runtimeSampledAt,
-      childSessionKeys: row.archived === true ? [] : (row.childSessions ?? []),
+      childSessionKeys:
+        row.archived === true
+          ? []
+          : (row.childSessions ?? []).filter((key) => !isSubagentSessionKey(key)),
       children: [],
       isChild,
       loadingChildren: input.loadingChildSessionKeys.has(row.key),

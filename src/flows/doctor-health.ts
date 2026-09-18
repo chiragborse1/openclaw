@@ -12,6 +12,7 @@ import {
   UPDATE_POST_INSTALL_DOCTOR_ADVISORY_EXIT_CODE,
   UPDATE_POST_INSTALL_DOCTOR_RESULT_PATH_ENV,
   writeUpdatePostInstallDoctorResult,
+  UpdateDoctorError,
   type UpdateDoctorWriteAuthority,
   type DoctorConfigCapture,
   type UpdatePostInstallDoctorResult,
@@ -33,9 +34,10 @@ const loadConfigModule = createLazyRuntimeModule(() => import("../config/config.
 
 async function assertDoctorDatabaseSchemasCompatible(scope?: "state") {
   const databasePreflight = await import("../state/openclaw-database-preflight.js");
-  const [{ createConfigIO }, targets] = await Promise.all([
+  const [{ createConfigIO }, targets, { openDoctorStateSchemaReadAdmission }] = await Promise.all([
     import("../config/io.js"),
     import("../config/sessions/targets.js"),
+    import("../state/openclaw-state-db-doctor-schema.js"),
   ]);
   const snapshot = await createConfigIO({
     env: { ...process.env },
@@ -46,6 +48,7 @@ async function assertDoctorDatabaseSchemasCompatible(scope?: "state") {
   const databaseSchemas = await databasePreflight.preflightOpenClawDatabaseSchemas({
     env: process.env,
     scope,
+    openStateSchemaReadAdmission: openDoctorStateSchemaReadAdmission,
     configuredAgentDatabaseTargets: (registeredDatabases) =>
       targets.resolveConfiguredAgentDatabaseTargets(cfg, { env: process.env, registeredDatabases }),
     configuredAgentDatabaseCandidatePaths: targets.resolveConfiguredAgentDatabaseCandidatePaths(
@@ -135,7 +138,6 @@ async function runDoctorHealthFlowWithResult(
         await assertDoctorDatabaseSchemasCompatible("state");
         const { maybeOfferUpdateBeforeDoctor } = await import("../commands/doctor-update.js");
         const offeredUpdate = await maybeOfferUpdateBeforeDoctor({
-          runtime: effectiveRuntime,
           options,
           root,
           confirm: (p) => prompter.confirm(p),
@@ -159,6 +161,19 @@ async function runDoctorHealthFlowWithResult(
         runtime: effectiveRuntime,
         json: options.json,
       });
+
+      if (maintenance && (options.repair === true || options.yes === true)) {
+        const { repairOpenClawStateDatabaseReadabilityForDoctor } =
+          await import("../state/openclaw-state-db.js");
+        // Restore catalog reads before config discovery; versioned migrations remain in its graph.
+        const readability = repairOpenClawStateDatabaseReadabilityForDoctor({ env: process.env });
+        if (readability.warnings.length > 0) {
+          throw new Error(readability.warnings.join("\n"));
+        }
+        for (const change of readability.changes) {
+          effectiveRuntime.log(change);
+        }
+      }
 
       // Keep side-effect-heavy legacy checks before structured contributions until fully migrated.
       const { maybeRepairUiProtocolFreshness } = await import("../commands/doctor-ui.js");
@@ -260,6 +275,7 @@ async function runDoctorHealthFlowWithResult(
     }
     await maintenance?.finish(ctx.cfg);
     const warnings = normalizeUpdatePostInstallDoctorWarnings([
+      ...(maintenance?.warnings ?? []),
       ...(ctx.configResult.stateMigrationStepReceipts ?? []).flatMap((receipt) =>
         receipt.outcome === "warning" ||
         receipt.outcome === "skipped" ||
@@ -293,27 +309,29 @@ async function runDoctorHealthFlowWithResult(
     doctorResult = {
       status: "error",
       failureFacts:
-        error instanceof DoctorStateMigrationRefusalError
-          ? normalizeUpdateFailureFacts(
-              error.stepReceipts.flatMap((receipt) =>
-                receipt.outcome === "refused" && receipt.refusal
-                  ? [
-                      {
-                        check: receipt.id,
-                        code: receipt.refusal.code,
-                        message: receipt.refusal.message,
-                      },
-                    ]
-                  : [],
-              ),
-            )
-          : [
-              createUpdateFailureFact({
-                check: "doctor",
-                code: "doctor-failed",
-                message: error instanceof Error ? error.message : String(error),
-              }),
-            ],
+        error instanceof UpdateDoctorError
+          ? error.failureFacts
+          : error instanceof DoctorStateMigrationRefusalError
+            ? normalizeUpdateFailureFacts(
+                error.stepReceipts.flatMap((receipt) =>
+                  receipt.outcome === "refused" && receipt.refusal
+                    ? [
+                        {
+                          check: receipt.id,
+                          code: receipt.refusal.code,
+                          message: receipt.refusal.message,
+                        },
+                      ]
+                    : [],
+                ),
+              )
+            : [
+                createUpdateFailureFact({
+                  check: "doctor",
+                  code: "doctor-failed",
+                  message: error instanceof Error ? error.message : String(error),
+                }),
+              ],
     };
     if (maintenance) {
       if (!(error instanceof DoctorStateMigrationRefusalError)) {

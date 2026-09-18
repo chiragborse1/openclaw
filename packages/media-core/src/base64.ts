@@ -38,6 +38,34 @@ export function estimateBase64DecodedBytes(base64: string): number {
   return Math.max(0, estimated);
 }
 
+/**
+ * Validates padded, whitespace-free base64 without normalizing it or decoding bytes.
+ * Keep attachment alphabet/padding semantics; canonicalizeBase64 additionally checks pad bits.
+ */
+export function isValidBase64(value: string): boolean {
+  if (value.length === 0 || value.length % 4 !== 0) {
+    return false;
+  }
+
+  let padding = 0;
+  let sawPadding = false;
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code === 0x3d) {
+      padding += 1;
+      if (padding > 2) {
+        return false;
+      }
+      sawPadding = true;
+      continue;
+    }
+    if (sawPadding || base64DataValue(code) < 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function base64DataValue(code: number): number {
   if (code >= 0x41 && code <= 0x5a) {
     return code - 0x41;

@@ -5,7 +5,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
-import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
+import { createLazyRuntimeSurface } from "openclaw/plugin-sdk/lazy-runtime";
 import type {
   AnyAgentTool,
   OpenClawPluginApi,
@@ -38,6 +38,7 @@ import { resolveBrowserConfig, resolveProfile } from "./src/browser/config.js";
 import { getBrowserProfileCapabilities } from "./src/browser/profile-capabilities.js";
 import {
   initializeBrowserSessionTabStore,
+  readBrowserDashboardSessionOwners,
   readBrowserDashboardTabs,
   readBrowserDashboardStopIntents,
 } from "./src/browser/session-tab-store.js";
@@ -48,12 +49,22 @@ import {
 
 const EAGER_BROWSER_CONTROL_SERVICE_ENV = "OPENCLAW_EAGER_BROWSER_CONTROL_SERVER";
 const logger = createSubsystemLogger("browser");
+let hasBrowserNodeHostWork: (() => boolean) | undefined;
+let hasBrowserProxyUploadWork: (() => boolean) | undefined;
 
-const loadBrowserRegistrationRuntimeModule = createLazyRuntimeModule(
+const loadBrowserRegistrationRuntimeModule = createLazyRuntimeSurface(
   () => import("./register.runtime.js"),
+  (runtime) => {
+    hasBrowserNodeHostWork = runtime.hasBrowserNodeHostWork;
+    return runtime;
+  },
 );
-const loadBrowserUploadCleanupRuntimeModule = createLazyRuntimeModule(
+const loadBrowserUploadCleanupRuntimeModule = createLazyRuntimeSurface(
   () => import("./src/browser-proxy-upload-cleanup.runtime.js"),
+  (runtime) => {
+    hasBrowserProxyUploadWork = runtime.hasBrowserProxyUploadWork;
+    return runtime;
+  },
 );
 
 function deriveChatTypeFromSessionKey(
@@ -217,6 +228,11 @@ function createBrowserProxyNodeHostCommand(command: string): OpenClawPluginNodeH
   return {
     command,
     cap: "browser",
+    hasActiveWork: () =>
+      (loadBrowserRegistrationRuntimeModule.peek() !== undefined &&
+        hasBrowserNodeHostWork?.() !== false) ||
+      (loadBrowserUploadCleanupRuntimeModule.peek() !== undefined &&
+        hasBrowserProxyUploadWork?.() !== false),
     isAvailable: ({ config }) =>
       config.browser?.enabled !== false && config.nodeHost?.browserProxy?.enabled !== false,
     handle: async (paramsJSON, _io, context) => {
@@ -323,16 +339,12 @@ function createLazyBrowserPluginService(): OpenClawPluginService {
           if (stopping || event.reason !== "board") {
             return;
           }
-          for (const dashboard of [
-            ...readBrowserDashboardTabs().map((tab) => tab.dashboard),
-            ...readBrowserDashboardStopIntents(),
-          ]) {
+          for (const dashboard of readBrowserDashboardSessionOwners()) {
             if (
-              dashboard &&
-              (dashboard.sessionKey === event.sessionKey ||
-                (event.agentId &&
-                  dashboard.agentId === normalizeAgentId(event.agentId) &&
-                  parseAgentSessionKey(dashboard.sessionKey)?.rest === event.sessionKey))
+              dashboard.sessionKey === event.sessionKey ||
+              (event.agentId &&
+                dashboard.agentId === normalizeAgentId(event.agentId) &&
+                parseAgentSessionKey(dashboard.sessionKey)?.rest === event.sessionKey)
             ) {
               pendingSessions.add(dashboard.sessionKey);
             }

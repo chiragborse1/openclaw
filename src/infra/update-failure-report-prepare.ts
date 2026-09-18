@@ -214,8 +214,22 @@ function resolveRecoveryOutcome(
 ): string {
   const { result } = input;
   if (result.recovery?.serviceRestartSafe === true) {
+    const version = redactPublicSupportVersion(result.recovery.version);
+    const restored = result.recovery.packageRollbackVerified === true;
+    if (result.recovery.service === "healthy") {
+      return `${restored ? "package rollback verified; " : ""}Gateway serving ${version}; health verified`;
+    }
+    const packageOutcome = restored
+      ? `package rollback verified (${version})`
+      : "runtime files verified";
+    const reason = sanitizeReportField(result.recovery.reason ?? "not-recorded", context, 96);
+    const nextCommand =
+      "Run `openclaw gateway status --deep` to check the serving version and readiness.";
     if (result.recovery.service === "failed") {
-      return "runtime files verified; Gateway restart failed. Run `openclaw gateway status --deep` before restarting manually.";
+      return `${packageOutcome}; Gateway health failed (${reason}). ${nextCommand}`;
+    }
+    if (restored) {
+      return `${packageOutcome}; Gateway health unverified (${reason}). ${nextCommand}`;
     }
     return "verified safe to restart";
   }
@@ -266,12 +280,22 @@ async function renderBoundedDiagnostics(
   for (const step of selectUpdateFailureReportSteps(steps)) {
     const phase = sanitizeFactIdentifier(step.name, context);
     const termination = step.termination ? `, termination ${step.termination}` : "";
-    const message =
-      step.failureFacts?.find((fact) => fact.message)?.message ?? step.detail ?? step.stderrTail;
-    const diagnostic = message ? redactPublicSupportDiagnosticLine(message, context) : undefined;
-    diagnostics.push(
-      `Failed phase ${phase}: ${step.exitCode == null && diagnostic && diagnostic !== "[redacted-diagnostic]" ? diagnostic : `exit ${step.exitCode ?? "unknown"}`}${termination}`,
-    );
+    const message = [
+      ...(step.failureFacts ?? []).flatMap((fact) => [fact.message, fact.code]),
+      step.detail,
+      step.stderrTail,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const diagnostic = redactPublicSupportDiagnosticLine(message, context);
+    const exit = `exit ${step.exitCode ?? "unknown"}`;
+    const detail =
+      diagnostic === "[redacted-diagnostic]"
+        ? exit
+        : step.exitCode == null
+          ? diagnostic
+          : `${exit} (${diagnostic})`;
+    diagnostics.push(`Failed phase ${phase}: ${detail}${termination}`);
     diagnostics.push(
       ...(await Promise.all(
         normalizeUpdateFailureFacts(step.failureFacts ?? [], context.env).map(async (fact) =>

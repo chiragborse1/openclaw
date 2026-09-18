@@ -1,8 +1,10 @@
 // Defines user-facing config field labels used by schema metadata.
 import { MEDIA_AUDIO_FIELD_LABELS } from "./media-audio-field-metadata.js";
+import { META_FIELD_LABELS } from "./schema.meta.js";
 import { NODE_CAPABILITY_FIELD_LABELS } from "./schema.node-capabilities.js";
 import { CLOUD_WORKER_FIELD_LABELS } from "./zod-schema.cloud-workers.js";
 import { DESKTOP_FIELD_LABELS } from "./zod-schema.desktop.js";
+import { NODE_HOST_FIELD_LABELS } from "./zod-schema.node-host.js";
 import { TELEMETRY_FIELD_LABELS } from "./zod-schema.telemetry.js";
 
 export const FIELD_LABELS: Record<string, string> = {
@@ -11,10 +13,7 @@ export const FIELD_LABELS: Record<string, string> = {
   "channels.discord.activities": "Discord Activities",
   "channels.discord.activities.clientSecret": "Discord Activities Client Secret",
   "channels.discord.activities.applicationId": "Discord Activities Application ID",
-  meta: "Compatibility Metadata",
-  "meta.lastTouchedVersion": "Config Last Touched Version",
-  "meta.migrations": "Config Migration Markers",
-  "meta.migrations.modelPolicyAllowlist": "Model Policy Allowlist Migration",
+  ...META_FIELD_LABELS,
   env: "Environment",
   "env.shellEnv": "Shell Environment Import",
   "env.shellEnv.enabled": "Shell Environment Import Enabled",
@@ -425,22 +424,7 @@ export const FIELD_LABELS: Record<string, string> = {
   "gateway.nodes.pairing.sshVerify": "Gateway Node Pairing SSH Verification",
   ...NODE_CAPABILITY_FIELD_LABELS,
   "gateway.nodes.commands.deny": "Gateway Node Denylist",
-  nodeHost: "Node Host",
-  "nodeHost.agentRuns": "Node Agent Runs",
-  "nodeHost.agentRuns.claude": "Node Claude Agent Runs",
-  "nodeHost.agentRuns.claude.enabled": "Node Claude Agent Runs Enabled",
-  "nodeHost.workerRuns": "Node Worker Runs",
-  "nodeHost.workerRuns.enabled": "Node Worker Runs Enabled",
-  "nodeHost.workerRuns.capacity": "Node Worker Run Capacity",
-  "nodeHost.workerRuns.isolation": "Node Worker Run Isolation",
-  "nodeHost.workerRuns.containerImage": "Node Worker Run Container Image",
-  "nodeHost.browserProxy": "Node Browser Proxy",
-  "nodeHost.browserProxy.enabled": "Node Browser Proxy Enabled",
-  "nodeHost.browserProxy.allowProfiles": "Node Browser Proxy Allowed Profiles",
-  "nodeHost.mcp": "Node Host MCP",
-  "nodeHost.mcp.servers": "Node Host MCP Servers",
-  "nodeHost.skills": "Node Host Skills",
-  "nodeHost.skills.enabled": "Node Host Skills Enabled",
+  ...NODE_HOST_FIELD_LABELS,
   attachments: "Attachments",
   "attachments.ttlHours": "Attachment Retention TTL (hours)",
   bindings: "Bindings",

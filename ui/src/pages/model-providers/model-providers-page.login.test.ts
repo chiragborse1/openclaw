@@ -313,7 +313,7 @@ describe("Models provider login", () => {
   );
 
   it.each(["error", "input"] as const)(
-    "retains provider guidance for the next %s without a note acknowledgement",
+    "keeps recovery guidance in the next %s without replaying it in the ordinary alert",
     async (outcome) => {
       vi.spyOn(window, "open").mockReturnValue(null);
       const { context, request } = loginHarness();
@@ -349,8 +349,20 @@ describe("Models provider login", () => {
       const page = appendPage(context);
       await chooseLogin(page, "example-browser");
       await waitForFast(() =>
-        expect(page.querySelector("openclaw-modal-dialog")?.textContent).toContain(guidance),
+        expect(page.querySelector("openclaw-modal-dialog")?.textContent).toContain(
+          outcome === "error" ? "Could not finish. Open Details" : guidance,
+        ),
       );
+      if (outcome === "error") {
+        expect(page.querySelector("[role=alert]")?.textContent).not.toContain(guidance);
+        const details = page.querySelector<HTMLDetailsElement>("openclaw-modal-dialog details")!;
+        expect(details.open).toBe(false);
+        details.querySelector("summary")!.click();
+        expect(details.open).toBe(true);
+        expect(details.querySelector("p")?.textContent).toBe(
+          ["Certificate validation failed.", guidance].join("\n\n"),
+        );
+      }
       expect(page.querySelector("openclaw-modal-dialog")?.textContent).toContain(
         outcome === "error" ? "Certificate validation failed." : "Enter the client ID",
       );
@@ -413,7 +425,7 @@ describe("Models provider login", () => {
   });
 
   it("releases a saved login on disposal while Cancel is pending and allows a second login", async () => {
-    const { context, request } = loginHarness();
+    const { context, request, publishEvent } = loginHarness();
     const client = context.gateway.snapshot.client!;
     const initialAuth = await client.request<ModelAuthStatusResult>("models.authStatus");
     const originalRequest = request.getMockImplementation()!;
@@ -457,6 +469,7 @@ describe("Models provider login", () => {
             await prompter.text({ message: "Enter your key", sensitive: true });
             owner.lockCancellation();
             profiles.add(profileId);
+            publishEvent({ type: "event", event: "chat.metadata.changed", payload: {} });
             await prompter.note("Credentials saved. Continue to finish.", "Provider notes");
           });
           sessions.set(params.sessionId, session);

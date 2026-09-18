@@ -25,7 +25,10 @@ Session label lookups use a nonunique partial index on
 `session_nodes(label, session_key)` for non-null labels, without changing agent
 schema 20. The existing writable schema owner installs and repairs the index;
 read-only startup accepts its absence until that owner opens the database. A
-present but noncanonical definition still fails schema validation. Canonical
+present but noncanonical definition still fails strict offline validation;
+Gateway startup admits canonical index repairs to the same writable schema owner
+before readiness and logs the rebuilt indexes and elapsed time. Missing tables
+and incompatible column definitions remain refusals. Canonical
 session JSON, label uniqueness checks, and retention remain unchanged. Older
 same-version readers can ignore the extra index, so binary rollback leaves it
 intact. The accepted design is recorded in the
@@ -65,6 +68,16 @@ ignore the new representation. The supported updater's Doctor phase performs
 the schema migration; changing the cold-storage age setting afterward needs no
 Gateway restart. These are separate operations: live configuration reload does
 not authorize an active schema migration.
+
+Agent schema 21 makes the canonical-validation pending table and its node,
+window and main-key invalidation triggers required. This needs a version bump:
+older schema inspectors reject unexpected triggers on canonical tables. The
+maintenance migration marks existing nodes pending without rewriting their
+contents; readiness and Doctor own validation. Already-open older connections
+leave pending markers when they change canonical inputs. Reopening with older
+code is refused. Rollback uses the verified pre-migration backup and matching
+build, not marker changes or removal of the derived table alone. See
+[incremental canonical-session validation](/reference/database-schemas/agent-schema-history#incremental-canonical-session-validation).
 
 Agent schema 19 records collected input consumption in the nullable
 `session_pending_inputs.consumed_event_id TEXT` column. Doctor and the feature's
@@ -158,6 +171,16 @@ with off-thread parsing and bounded write chunks. Total rebuild cost remains
 proportional to history. Rewrites invalidate or rebuild the projection in their
 own transaction, and transcript deletion removes its eligibility rows. Downgrade
 leaves the additive column and index intact; re-upgrade reconciles unknown rows.
+
+Multi-account person profiles add the bare nullable
+`user_profiles.primary_github_account_id INTEGER` column on first profile use,
+without changing the shared-state schema version. Existing single-account profiles
+have an unambiguous primary; explicit merges retain all verified account rows and
+keep the target primary. This deliberately accepts a downgrade limitation:
+older single-account writers can discard secondary account links or split a linked
+person again. Re-upgrading cannot reconstruct discarded links. Keep a backup
+before downgrading, and explicitly relink affected profiles after upgrading.
+The version number does not certify preservation of multi-account relationships.
 
 User profiles use the same rule for the nullable bare `user_profiles.role TEXT`
 column in state schema 9. Operator-role assignment lazily ensures the column on

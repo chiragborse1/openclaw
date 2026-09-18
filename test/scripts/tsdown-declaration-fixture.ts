@@ -112,6 +112,8 @@ export function createFixture(
   for (const name of [
     ".bin",
     "@openclaw/fs-safe",
+    "@silvia-odwyer/photon-node",
+    "koffi",
     "playwright-core",
     "web-tree-sitter",
     "tree-sitter-bash",
@@ -163,13 +165,17 @@ export function createFixture(
   fs.cpSync(path.join(sourceRoot, "scripts/lib"), path.join(root, "scripts/lib"), {
     recursive: true,
   });
-  // These owners derive runtime inputs from import.meta.url; keep that graph inside the fixture.
+  // Keep the generator's source owners and import.meta.url lookups inside the fixture.
   const runtimeEntryOwners = new Set([
     ...Object.values(runtimeProcessDeclarationEntries),
+    "scripts/lib/managed-windows-job-launcher.mts",
+    "src/process/supervisor/service-child-windows-job-native.ts",
     "src/infra/update-managed-service-handoff-runtime-assets.ts",
     "src/infra/update-managed-service-handoff-native-loader.ts",
     "src/shared/freebsd-process-identity.ts",
     "src/infra/node-runtime-executable.ts",
+    "src/infra/runtime-dependency-ownership.ts",
+    "src/shared/non-packaged-plugin-dirs.ts",
     "packages/normalization-core/src/mountinfo-path.ts",
     "packages/normalization-core/src/record-coerce.ts",
   ]);

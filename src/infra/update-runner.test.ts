@@ -13,9 +13,7 @@ import { resolveStableNodePath } from "./stable-node-path.js";
 import type { UpdateChannel } from "./update-channels.js";
 import type { DevUpdateTarget } from "./update-dev-target.js";
 import { renderUpdateRunReport, updateRunReportInputFromResult } from "./update-run-report.js";
-import { buildUpdateDoctorEnv } from "./update-runner-doctor.js";
 import {
-  resolveUpdateDoctorExecutionPolicy,
   resolveUpdateInstallSurface,
   runGatewayUpdate,
   runGatewayUpdatePreflight,
@@ -56,86 +54,6 @@ function createRunner(responses: Record<string, CommandResponse>) {
   return { runner, calls };
 }
 
-describe("resolveUpdateDoctorExecutionPolicy", () => {
-  it("keeps fix mode when service repair is authorized", () => {
-    expect(
-      resolveUpdateDoctorExecutionPolicy({
-        targetVersion: "2026.4.1",
-        allowGatewayServiceRepair: true,
-      }),
-    ).toEqual({ fix: true });
-  });
-
-  it("uses the external policy for targets that support it", () => {
-    for (const targetVersion of ["2026.4.25-beta.1", "2026.4.25-beta.11", "2026.4.25"]) {
-      expect(
-        resolveUpdateDoctorExecutionPolicy({
-          targetVersion,
-          allowGatewayServiceRepair: false,
-        }),
-      ).toEqual({ fix: true, serviceRepairPolicy: "external" });
-    }
-  });
-
-  it("does not run fix mode on older targets that cannot honor ownership", () => {
-    expect(
-      resolveUpdateDoctorExecutionPolicy({
-        targetVersion: "2026.4.24",
-        allowGatewayServiceRepair: false,
-      }),
-    ).toEqual({ fix: false });
-  });
-
-  it.each([
-    {
-      name: "authorized service repair",
-      targetVersion: "2026.4.1",
-      allowGatewayServiceRepair: true,
-      expectedPolicy: null,
-    },
-    {
-      name: "an older target without service repair",
-      targetVersion: "2026.4.24",
-      allowGatewayServiceRepair: false,
-      expectedPolicy: null,
-    },
-    {
-      name: "a supported target without service repair",
-      targetVersion: "2026.4.25",
-      allowGatewayServiceRepair: false,
-      expectedPolicy: "external",
-    },
-  ])(
-    "passes the selected Doctor policy to a real child for $name",
-    async ({ targetVersion, allowGatewayServiceRepair, expectedPolicy }) => {
-      const policy = resolveUpdateDoctorExecutionPolicy({
-        targetVersion,
-        allowGatewayServiceRepair,
-      });
-      const result = await withEnvAsync({ OPENCLAW_SERVICE_REPAIR_POLICY: "external" }, () =>
-        runCommandWithTimeout(
-          [
-            process.execPath,
-            "-e",
-            "process.stdout.write(JSON.stringify(process.env.OPENCLAW_SERVICE_REPAIR_POLICY ?? null))",
-          ],
-          {
-            timeoutMs: 5000,
-            env: buildUpdateDoctorEnv({
-              allowGatewayServiceRepair,
-              allowGatewayActivation: false,
-              serviceRepairPolicy: policy.serviceRepairPolicy,
-            }),
-          },
-        ),
-      );
-
-      expect(result.code).toBe(0);
-      expect(result.stdout).toBe(JSON.stringify(expectedPolicy));
-    },
-  );
-});
-
 describe("runGatewayUpdate", () => {
   const preflightPrefixPattern = /(?:openclaw-update-preflight-|ocu-pf-)/;
 
@@ -154,6 +72,22 @@ describe("runGatewayUpdate", () => {
     tempDir = await fixtureRootTracker.make("case");
     await fs.writeFile(path.join(tempDir, "openclaw.mjs"), "export {};\n", "utf-8");
   });
+
+  async function withWindowsPackageManagerSimulation<T>(run: () => Promise<T>): Promise<T> {
+    const bunVersion = Object.getOwnPropertyDescriptor(process.versions, "bun");
+    if (bunVersion) {
+      // These cases simulate Windows command selection on a non-Windows host. Keep
+      // Bun's real system-Node probe from searching for a Windows executable here.
+      Object.defineProperty(process.versions, "bun", { ...bunVersion, value: undefined });
+    }
+    try {
+      return await withMockedWindowsPlatform(run);
+    } finally {
+      if (bunVersion) {
+        Object.defineProperty(process.versions, "bun", bunVersion);
+      }
+    }
+  }
 
   async function createStableTagRunner(params: {
     stableTag: string;
@@ -1167,7 +1101,8 @@ describe("runGatewayUpdate", () => {
       "refused by caller",
     );
     expect(beforeGitMutation).toHaveBeenCalledWith({
-      metadataUnreadable: expect.stringContaining("exited 128"),
+      sha: upstreamSha,
+      metadataUnreadable: `git show ${upstreamSha}:package.json exited 128`,
     });
   });
 
@@ -1813,7 +1748,7 @@ describe("runGatewayUpdate", () => {
       },
     });
 
-    const result = await withMockedWindowsPlatform(() =>
+    const result = await withWindowsPackageManagerSimulation(() =>
       runWithCommand(runCommand, { channel: "dev" }),
     );
 
@@ -1864,7 +1799,8 @@ describe("runGatewayUpdate", () => {
         PNPM_CONFIG_PREFER_OFFLINE: "false",
         pnpm_config_prefer_offline: undefined,
       },
-      () => withMockedWindowsPlatform(() => runWithCommand(runCommand, { channel: "dev" })),
+      () =>
+        withWindowsPackageManagerSimulation(() => runWithCommand(runCommand, { channel: "dev" })),
     );
 
     expect(result.status).toBe("ok");
@@ -2339,7 +2275,7 @@ describe("runGatewayUpdate", () => {
     expect(result).toMatchObject({ status: "error", reason: "preflight-no-good-commit" });
     expect(result.steps).toContainEqual(
       expect.objectContaining({
-        name: "preflight candidate clean check (upstream)",
+        name: "preflight update clean check (upstream)",
         exitCode: 1,
         stdoutTail: diagnostic,
       }),
@@ -2614,7 +2550,7 @@ describe("runGatewayUpdate", () => {
       },
     });
 
-    await withMockedWindowsPlatform(async () => {
+    await withWindowsPackageManagerSimulation(async () => {
       const result = await runWithCommand(runCommand, { channel: "dev" });
 
       expect(result.status).toBe("ok");
@@ -2649,7 +2585,7 @@ describe("runGatewayUpdate", () => {
       },
     });
 
-    await withMockedWindowsPlatform(async () => {
+    await withWindowsPackageManagerSimulation(async () => {
       const result = await runWithCommand(runCommand, { channel: "dev" });
 
       expect(result.status).toBe("ok");
@@ -3156,7 +3092,12 @@ describe("runGatewayUpdate", () => {
             doctorRan = true;
             await fs.writeFile(stateFile, "candidate-migrated-state");
             if (failure === "doctor-throw") {
-              throw new Error("doctor crashed after migration");
+              throw Object.assign(
+                new Error(
+                  "EACCES: permission denied, open '/home/update-user/private/config.json' token=synthetic-update-secret\nsecond-line-private-detail",
+                ),
+                { code: "EACCES" },
+              );
             }
             if (failure === "doctor-error") {
               return { code: 1, stderr: "doctor failed after migration" };
@@ -3176,6 +3117,22 @@ describe("runGatewayUpdate", () => {
               : "head-verification-failed",
         recovery: { serviceRestartSafe: false, reason: "state-migration-started" },
       });
+      if (failure === "doctor-throw") {
+        const doctor = result.steps.find((step) => step.name === "openclaw doctor");
+        expect(doctor).toMatchObject({
+          exitCode: 1,
+          failureFacts: [
+            {
+              check: "openclaw doctor",
+              code: "EACCES",
+              message: expect.stringContaining("permission denied, open [redacted-path]"),
+            },
+          ],
+        });
+        expect(JSON.stringify(doctor?.failureFacts)).not.toMatch(
+          /update-user|private\/config|synthetic-update-secret|second-line-private-detail/,
+        );
+      }
       expect(await fs.readFile(stateFile, "utf8")).toBe("candidate-migrated-state");
       expect(
         JSON.parse(await fs.readFile(path.join(tempDir, "dist", "build-info.json"), "utf8")),

@@ -1265,8 +1265,10 @@ describe("cron service timer regressions", () => {
       await saveCronStore(store.storePath, { version: 1, jobs: [cronJob] });
 
       let now = scheduledAt;
+      const heartbeatStarted = createDeferred();
       const heartbeatResult = createDeferred<HeartbeatRunResult>();
       const requestHeartbeatAndWait = vi.fn(async (): Promise<HeartbeatRunResult> => {
+        heartbeatStarted.resolve();
         return await heartbeatResult.promise;
       });
       const enqueueSystemEvent = vi.fn();
@@ -1286,9 +1288,13 @@ describe("cron service timer regressions", () => {
       const timerPromise = onTimer(state);
       try {
         const runId = `cron:main-session-cancel-boundary:${scheduledAt}`;
-        await vi.waitFor(() => expect(requestHeartbeatAndWait).toHaveBeenCalledTimes(1), {
-          interval: 0,
-        });
+        await Promise.race([
+          heartbeatStarted.promise,
+          timerPromise.then(() => {
+            throw new Error("Cron timer completed before main-session heartbeat handoff");
+          }),
+        ]);
+        expect(requestHeartbeatAndWait).toHaveBeenCalledTimes(1);
 
         const task = findCronTaskByBaseRunId(runId);
         if (!task) {
@@ -2635,6 +2641,7 @@ describe("cron service timer regressions", () => {
       await timerRun;
       await vi.waitFor(() => {
         expect(secondScheduledStarted).toHaveBeenCalledWith(secondScheduledJob.id);
+        expect(requireJob(state, secondScheduledJob.id).state.lastStatus).toBe("ok");
       });
 
       const second = requireJob(state, secondScheduledJob.id);

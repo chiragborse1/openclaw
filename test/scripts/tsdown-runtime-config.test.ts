@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core/expect";
 import { bundledPluginRoot } from "openclaw/plugin-sdk/test-fixtures";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildPluginSdkPackageExports } from "../../scripts/lib/plugin-sdk-entries.mts";
+import { importFreshModule } from "../../src/plugin-sdk/test-helpers/import-fresh.js";
 import { OPENCLAW_AGENT_SCHEMA_SQL } from "../../src/state/openclaw-agent-schema.js";
 import { OPENCLAW_STATE_SCHEMA_SQL } from "../../src/state/openclaw-state-schema.js";
 import tsdownConfig, {
@@ -117,7 +119,30 @@ function readAgentAuthDiscoverySource(): string {
   return readFileSync(new URL("../../src/agents/agent-auth-discovery.ts", import.meta.url), "utf8");
 }
 
+afterEach(() => vi.unstubAllEnvs());
+
 describe("tsdown config", () => {
+  it.each(["0", "1"])(
+    "emits QA transport facades only for private QA builds (%s)",
+    async (mode) => {
+      vi.stubEnv("OPENCLAW_BUILD_PRIVATE_QA", mode);
+      const { default: selectedConfigs } = await importFreshModule<
+        typeof import("../../tsdown.config.ts")
+      >(import.meta.url, `../../tsdown.config.ts?private-qa=${mode}`);
+      const runtimeEntries = asConfigArray(selectedConfigs)
+        .filter((config) => !(typeof config.dts === "object" && config.dts.emitDtsOnly))
+        .flatMap((config) => Object.entries(entrySources(config)));
+      const packageExports = buildPluginSdkPackageExports();
+      for (const subpath of ["qa-channel", "qa-channel-protocol", "qa-lab", "qa-runtime"]) {
+        const matches = runtimeEntries.filter(([name]) => name === `plugin-sdk/${subpath}`);
+        expect(matches).toEqual(
+          mode === "1" ? [[`plugin-sdk/${subpath}`, `src/plugin-sdk/${subpath}.ts`]] : [],
+        );
+        expect(Object.hasOwn(packageExports, `./plugin-sdk/${subpath}`)).toBe(false);
+      }
+    },
+  );
+
   it("minifies only the sealed deploy worker while preserving runtime names", () => {
     const configs = asConfigArray(tsdownConfig);
     const deployWorker = configs.find((config) => entryKeys(config).includes("worker/worker"));
@@ -194,10 +219,12 @@ describe("tsdown config", () => {
     const executableGraphs = new Set([
       unifiedGraph,
       expectDefined(workerGraph, "deploy worker graph"),
+      requireStandaloneRuntimeGraph("worker/image-processor.worker"),
       expectDefined(handoffGraph, "managed handoff graph"),
       requireNativeHookRelayGraph(),
       requireStandaloneRuntimeGraph("infra/sqlite-readonly-location.worker"),
       requireStandaloneRuntimeGraph("agents/harness/native-hook-relay-client.worker"),
+      requireStandaloneRuntimeGraph("process/spawn-broker/worker"),
     ]);
 
     for (const config of configs) {
@@ -270,6 +297,11 @@ describe("tsdown config", () => {
       label: "native hook locator worker",
       entry: "agents/harness/native-hook-relay-client.worker",
       source: "src/agents/harness/native-hook-relay-client.worker.ts",
+    },
+    {
+      label: "spawn broker",
+      entry: "process/spawn-broker/worker",
+      source: "src/process/spawn-broker/worker.ts",
     },
   ])("emits the $label once without sealing its package loaders", ({ entry, source }) => {
     const child = requireStandaloneRuntimeGraph(entry);
@@ -393,7 +425,7 @@ describe("tsdown config", () => {
     expect(hookEntries).toStrictEqual([]);
   });
 
-  it("bundles SDK-owned helpers while retaining fs-safe package ownership", () => {
+  it("bundles SDK-owned helpers while retaining native package ownership", () => {
     for (const graph of [
       requireUnifiedDistGraph(),
       requireStandaloneRuntimeGraph("infra/sqlite-readonly-location.worker"),
@@ -411,6 +443,10 @@ describe("tsdown config", () => {
       expect(alwaysBundle("openclaw/plugin-sdk/ssrf-runtime")).toBe(false);
       expect(alwaysBundle("zod")).toBe(true);
       expect(alwaysBundle("zod/v4/core")).toBe(true);
+      for (const id of ["typebox", "typebox/schema", "typebox/format", "typebox/system"]) {
+        expect(alwaysBundle(id)).toBe(false);
+        expect(external(id, undefined, false)).toBe(true);
+      }
       expect(alwaysBundle("not-a-runtime-dependency")).toBe(false);
     }
   });

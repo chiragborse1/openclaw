@@ -185,7 +185,11 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
     getConfig: () => this.context.runtimeConfig,
   });
   private readonly login = new ModelProviderLoginController(this, {
-    getScope: () => ({ context: this.context, agentId: this.selectedAgentId, data: this.data }),
+    getScope: () => ({
+      context: this.context,
+      agentId: this.selectedAgentId,
+      authStatus: this.data?.authStatus ?? null,
+    }),
     canStart: () => this.canMutate(),
     canContinue: () => this.mutationBlockedReason() === null,
     refresh: () => this.refresh("replacement"),
@@ -607,8 +611,7 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
     const rosterError = agentsState.agentsList ? null : agentsState.agentsError;
     const selected = agents.find((agent) => normalizeAgentId(agent.id) === this.selectedAgentId);
     const data = this.data ?? EMPTY_MODEL_PROVIDERS_DATA;
-    const runtimeState = this.context.runtimeConfig.state;
-    const configObject = currentConfigObject(runtimeState);
+    const configObject = currentConfigObject(this.context.runtimeConfig.state);
     const config = readModelProviderConfig(configObject);
     const catalog =
       gatewaySnapshot.client && this.selectedAgentId

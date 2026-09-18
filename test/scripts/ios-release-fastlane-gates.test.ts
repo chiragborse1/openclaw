@@ -150,9 +150,9 @@ describe("iOS Fastlane release upload gates", () => {
     const lockfile = readFileSync(gemfileLockPath, "utf8");
 
     expect(readFileSync(rubyVersionPath, "utf8")).toBe("3.4.10\n");
-    expect(gemfile).toContain('gem "fastlane", "2.238.0"');
+    expect(gemfile).toContain('gem "fastlane", "2.239.0"');
     expect(gemfile).toContain('ruby "3.4.10"');
-    expect(lockfile).toContain("fastlane (2.238.0)");
+    expect(lockfile).toContain("fastlane (2.239.0)");
     expect(lockfile).toContain("arm64-darwin");
     expect(lockfile).toContain("x86_64-darwin");
     expect(lockfile).toContain("CHECKSUMS");
@@ -748,6 +748,8 @@ def resolve_app_store_connect_app(app_identifier:, app_id:)
   $app
 end
 ${selector}
+${functionDefinition(readFastfile(), "resolve_ci_testflight_build!")}
+${functionDefinition(readFastfile(), "ci_testflight_build_group_ids")}
 ${verifier}
 build = Build.new("build-id", "2026.9.20", "1", "IOS")
 $groups = [
@@ -825,6 +827,8 @@ def resolve_app_store_connect_app(app_identifier:, app_id:)
   $fresh_app
 end
 ${selector}
+${functionDefinition(readFastfile(), "resolve_ci_testflight_build!")}
+${functionDefinition(readFastfile(), "ci_testflight_build_group_ids")}
 ${verifier}
 
 def run_case(label, post_groups:, app_builds:)

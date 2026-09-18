@@ -59,6 +59,7 @@ import type {
 import { SessionParticipationTracker } from "./chat-pane-state.ts";
 import {
   ChatSessionCompanionThreads,
+  type ChatSessionCompanionTurn,
   requestSessionCompanionAnswer,
   requestSessionCompanionState,
 } from "./chat-session-companion.ts";
@@ -68,6 +69,7 @@ import { requestChatPageUpdate } from "./chat-state-render.ts";
 import { resolveChatAgentId } from "./chat-state-route.ts";
 import { getChatComposerState } from "./components/chat-composer-state.ts";
 import type { ChatPaneHeaderAction } from "./components/chat-pane-header.ts";
+import { installChatComposerPickerDismissal } from "./components/chat-picker-overlay.ts";
 import type { ChatSessionSharingState } from "./components/chat-session-sharing.ts";
 import { ChatTranscriptController } from "./components/chat-transcript-controller.ts";
 import type { SessionDiscussionPanelConfig } from "./components/session-discussion-panel.ts";
@@ -295,7 +297,7 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
     sessionKey: string,
     face: BoardFace,
   ) => void;
-  @property({ attribute: false }) onFocusPane?: (paneId: string) => void;
+  @property({ attribute: false }) onFocusPane?: (paneId: string, intent?: "review-edit") => void;
   onPaneSessionChange?: (
     paneId: string,
     nextSessionKey: string,
@@ -318,7 +320,18 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
   @property({ attribute: false }) onClosePane?: (paneId: string) => void;
   @property({ attribute: false }) boardProvider?: BoardProvider;
 
+  private publishedRunActivity: ChatPaneBase["runActivity"] = null;
   protected readonly chatState = new ChatStateController<ChatPageHost>(this, () => {
+    const activity = this.runActivity;
+    if (
+      activity?.client === this.publishedRunActivity?.client &&
+      activity?.agentId === this.publishedRunActivity?.agentId &&
+      activity?.working === this.publishedRunActivity?.working &&
+      activity?.completion === this.publishedRunActivity?.completion
+    ) {
+      return;
+    }
+    this.publishedRunActivity = activity;
     this.dispatchEvent(new Event(CHAT_RUN_ACTIVITY_CHANGED_EVENT, { bubbles: true }));
   });
 
@@ -343,13 +356,7 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
   });
   protected readonly progressCard = new SessionProgressCardController(this, {
     gateway: () => this.context?.gateway,
-    target: () => {
-      const state = this.state;
-      if (!state || this.isCurrentSessionArchived(state) || !this.secondarySessionReadsReady()) {
-        return undefined;
-      }
-      return this.resolveChatReadTarget();
-    },
+    target: () => this.initialProgressCardTarget(),
   });
   protected readonly questionPromptState = createQuestionPromptState(() => {
     this.questionPrompts = listQuestionPrompts(this.questionPromptState);
@@ -520,28 +527,27 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
     }
   }
 
-  protected readonly submitSessionCompanionQuestion = async (question: string) => {
+  protected readonly submitSessionCompanionQuestion = async (
+    question: string | ChatSessionCompanionTurn,
+  ) => {
     const state = this.state;
     if (!state || !state.sessionKey) {
       return;
     }
-    const sessionKey = state.sessionKey;
+    const { sessionKey, client, connected } = state;
     const agentId = resolveChatAgentId(state);
     this.requestSessionRail("open");
-    if (!question.trim()) {
+    const text = typeof question === "string" ? question : question.question;
+    if (!text.trim()) {
       return;
     }
-    if (!state.connected || !state.client) {
-      this.sessionCompanionThreads.setDraft(sessionKey, question, agentId);
+    if (!connected || !client) {
+      this.sessionCompanionThreads.setDraft(sessionKey, text, agentId);
       return;
     }
-    const client = state.client;
-    await this.sessionCompanionThreads.submit(
-      sessionKey,
-      question,
-      (key, value) => requestSessionCompanionAnswer(client, key, value, agentId),
-      agentId,
-    );
+    const ask = (key: string, value: string) =>
+      requestSessionCompanionAnswer(client, key, value, agentId);
+    await this.sessionCompanionThreads.submit(sessionKey, question, ask, agentId);
   };
 
   protected readonly prefillSessionCompanionQuestion = (question: string) => {
@@ -674,6 +680,7 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
     super();
     observeNativeGateway(this);
     void new SubscriptionsController(this)
+      .effect(() => this.ownerDocument, installChatComposerPickerDismissal)
       .watch(
         () => this.context && chatInputOwnerForContext(this.context),
         (owner, notify) => owner.subscribe(notify),
@@ -735,6 +742,9 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
   ): boolean;
   protected abstract publishHeaderError(error: unknown, owner?: string): void;
   protected abstract probeSessionDiscussion(sessionKey: string): Promise<void>;
+  protected abstract initialProgressCardTarget():
+    | ReturnType<typeof resolveUiConversationIdentity>
+    | undefined;
   protected abstract secondarySessionReadsReady(explicit?: boolean): boolean;
   protected abstract loadHeaderPlatform(
     client: GatewayBrowserClient,

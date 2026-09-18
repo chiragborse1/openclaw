@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalizeBase64, estimateBase64DecodedBytes } from "./base64.js";
+import { canonicalizeBase64, estimateBase64DecodedBytes, isValidBase64 } from "./base64.js";
 
 describe("base64 helpers", () => {
   it("canonicalizeBase64 validates large payloads without cons-string overflow", () => {
@@ -53,14 +53,16 @@ describe("base64 helpers", () => {
 
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-  it("canonicalizeBase64 accepts the full standard alphabet", () => {
+  it("base64 helpers accept the full standard alphabet", () => {
     expect(canonicalizeBase64(alphabet)).toBe(alphabet);
+    expect(isValidBase64(alphabet)).toBe(true);
   });
 
   it.each(["*", ",", ".", ":", "@", "[", "`", "{", "-", "_", "\u007f", "é", "\ud800", "\udc00"])(
-    "canonicalizeBase64 rejects non-alphabet glyph %j",
+    "base64 helpers reject non-alphabet glyph %j",
     (glyph) => {
       expect(canonicalizeBase64("AA" + glyph + "A")).toBeUndefined();
+      expect(isValidBase64("AA" + glyph + "A")).toBe(false);
     },
   );
 
@@ -150,4 +152,23 @@ describe("base64 helpers", () => {
   ] as const)("$name", ({ actual, expected }) => {
     expect(actual).toBe(expected);
   });
+});
+
+it.each<[string, boolean]>([
+  ["", false],
+  ["QQ==", true],
+  ["QUI=", true],
+  ["QUJD", true],
+  ["ZE==", true], // Attachment validation historically accepts nonzero pad bits.
+  ["QQ", false],
+  ["QQ==\n", false],
+  ["Q Q=", false],
+  ["QQ$=", false],
+  ["QQ-_", false],
+  ["QQ=Q", false],
+  ["Q===", false],
+  ["====", false],
+  ["QQ==QQ==", false],
+])("validates attachment base64 %j without normalization", (value, accepted) => {
+  expect(isValidBase64(value)).toBe(accepted);
 });

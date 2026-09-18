@@ -8,7 +8,10 @@ import { createVitestResourceOwner } from "../../../scripts/lib/vitest-resource-
 import { createFixtureLifetime } from "../../../test/helpers/fixture-lifetime.js";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { runtimeProcessEntrypoints } from "../../infra/runtime-process-entrypoints.js";
-import { resolveRuntimeWorkerUrl } from "../../infra/runtime-worker-url.js";
+import {
+  resolveRuntimeWorkerArgv,
+  resolveRuntimeWorkerUrl,
+} from "../../infra/runtime-worker-url.js";
 import { resolvePreferredOpenClawTmpDir } from "../../infra/tmp-openclaw-dir.js";
 import { createManagedHandoffLeaseStore } from "../../infra/update-managed-service-handoff-lease.js";
 import { createUpdateRun, getUpdateRun } from "../../infra/update-run-ledger.js";
@@ -18,11 +21,14 @@ import {
 } from "../../node-host/node-worker-process-identity.js";
 import * as commandRunner from "../../process/exec.js";
 import * as stateDatabase from "../../state/openclaw-state-db.js";
+import { resolveTestNodeExecPath } from "../../test-utils/node-process.js";
 import { updateExecutorNativeEntrypoints } from "./update-command-executor-native-runtime.test-support.js";
+import { legacyFinalizeEntrypoint } from "./update-command-legacy-finalize-entrypoint.test-support.js";
 
 // Vitest cancellation ends its wrapper before the body unwinds. Keep the
 // authority database and scratch inputs until that original body has joined.
 const fixture = createFixtureLifetime();
+const testNodeExecPath = resolveTestNodeExecPath();
 afterEach(() => fixture.cleanup());
 
 async function closeLegacyFixture(
@@ -307,7 +313,7 @@ function runLegacyFinalizationScenario(scenario: (typeof scenarios)[number], sig
             : null,
           preUpdatePluginInstallRecords: {},
           startedAt: Date.now(),
-          packageUpdateNodeRunner: process.execPath,
+          packageUpdateNodeRunner: testNodeExecPath,
           updateStepTimeoutMs: 20000,
           rollbackBlockedReason:
             scenario === "rollback-state-unverified" ? scenario : "state-migrated-no-rollback",
@@ -315,11 +321,10 @@ function runLegacyFinalizationScenario(scenario: (typeof scenarios)[number], sig
       };
       command = commandRunner.runUtf8CommandWithTimeout(
         [
-          process.execPath,
-          "--import",
-          loader,
-          fileURLToPath(
-            new URL("./update-command-legacy-finalize.test-support.ts", import.meta.url),
+          testNodeExecPath,
+          ...resolveRuntimeWorkerArgv(
+            resolveRuntimeWorkerUrl(legacyFinalizeEntrypoint),
+            testNodeExecPath,
           ),
           JSON.stringify(runtimeProcessEntrypoints.sqliteReadOnly),
         ],

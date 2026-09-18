@@ -36,7 +36,7 @@ import {
   toolWorkspacePath,
   type ToolRenderOptions,
 } from "./chat-tool-content.ts";
-import { renderToolFailures } from "./chat-tool-failure.ts";
+import { renderToolOutcomeSummary } from "./chat-tool-outcome-summary.ts";
 import { renderToolPreview } from "./widget-card.ts";
 
 export {
@@ -312,19 +312,21 @@ function renderProgressCardReceipt(card: ToolCard, outcome: ToolCardOutcome) {
     steps.find((step) => step.status === "pending") ??
     steps.findLast((step) => step.status === "completed");
   const label =
-    outcome === "failed"
-      ? t("sessionProgressCard.receipt.failed")
-      : outcome === "running"
-        ? t("sessionProgressCard.receipt.updating")
-        : steps.length > 0
-          ? t("sessionProgressCard.receipt.updated", {
-              completed: String(completed),
-              current: current?.step ?? "",
-              total: String(steps.length),
-            })
-          : markdown
-            ? t("sessionProgressCard.receipt.noteUpdated")
-            : t("sessionProgressCard.receipt.cleared");
+    outcome === "skipped"
+      ? t("sessionProgressCard.receipt.skipped")
+      : outcome === "failed"
+        ? t("sessionProgressCard.receipt.failed")
+        : outcome === "running"
+          ? t("sessionProgressCard.receipt.updating")
+          : steps.length > 0
+            ? t("sessionProgressCard.receipt.updated", {
+                completed: String(completed),
+                current: current?.step ?? "",
+                total: String(steps.length),
+              })
+            : markdown
+              ? t("sessionProgressCard.receipt.noteUpdated")
+              : t("sessionProgressCard.receipt.cleared");
   // The label already names the running/failed state, so the row stays neutral
   // like every other transcript activity row instead of adding its own chrome.
   return html`<div class="chat-tool-msg-collapse chat-progress-card-receipt">
@@ -365,14 +367,7 @@ function resolveCollapsedToolSummaryParts(params: {
   };
 }
 
-export function isRunningToolCard(card: ToolCard, runActive: boolean | undefined): boolean {
-  // Only live tool-stream cards can be running; historical transcript calls
-  // without results (aborted runs) must stay inert during later runs. The
-  // result event ends the running state — partial streamed output does not.
-  return resolveToolCardOutcome(card, runActive) === "running";
-}
-
-export function resolveToolRowText(card: ToolCard, runActive?: boolean): string {
+function resolveToolRowText(card: ToolCard, runActive?: boolean): string {
   const view = resolveToolCallView({ name: card.name, args: card.args, details: card.details });
   if (view.title) {
     return view.title;
@@ -463,7 +458,9 @@ export function renderToolCard(
   const view = resolveToolCallView({ name: card.name, args: card.args, details: card.details });
   const display = resolveToolDisplay({ name: card.name, args: card.args, detailMode: "explain" });
   const activityCards = opts.activityCards ?? [card];
-  const isRunning = activityCards.some((item) => isRunningToolCard(item, opts.runActive));
+  const isRunning = activityCards.some(
+    (item) => resolveToolCardOutcome(item, opts.runActive) === "running",
+  );
   const expanded = opts.expanded;
   const icon = TOOL_ROW_ICONS[view.kind] ?? display.icon;
   const workspaceFilePath = toolWorkspacePath(card, view);
@@ -481,7 +478,7 @@ export function renderToolCard(
         opts.onOpenWorkspaceFile,
       )}</span
     >
-    ${expanded ? nothing : renderToolFailures(activityCards, Boolean(opts.children))}
+    ${expanded ? nothing : renderToolOutcomeSummary(activityCards, Boolean(opts.children))}
     <span class="chat-tool-row__chevron" aria-hidden="true">${icons.chevronRight}</span>
   `;
 

@@ -49,6 +49,7 @@ import type {
   ToolProgressDetailMode,
   ToolResultFormat,
 } from "../../embedded-agent-subscribe.shared-types.js";
+import type { ExecSessionDefaults } from "../../exec-defaults.js";
 import type { FastModeAutoProgressState } from "../../fast-mode.js";
 import type { ContextEngineLogicalTurnLease } from "../../harness/context-engine-logical-turn.js";
 import type { ContextEngineTurnAttemptFacts } from "../../harness/context-engine-turn-attempt.js";
@@ -188,8 +189,6 @@ export type RunEmbeddedAgentParams = {
   requireExplicitMessageTarget?: boolean;
   /** If true, omit the message tool from the tool list. */
   disableMessageTool?: boolean;
-  /** Host-prepared proof that the exact session can request Gateway publication. */
-  githubPublicationAvailable?: boolean;
   swarmCollector?: boolean;
   swarmOutputSchema?: Record<string, unknown>;
   /** Restrict this reconstructed run to restart-safe tools. */
@@ -333,6 +332,8 @@ export type RunEmbeddedAgentParams = {
   bootstrapPromptWarningSignaturesSeen?: string[];
   /** Last shown bootstrap truncation warning signature for this session. */
   bootstrapPromptWarningSignature?: string;
+  /** Canonical persisted exec policy for this session. */
+  execSession?: ExecSessionDefaults;
   execOverrides?: Pick<
     ExecToolDefaults,
     | "host"
@@ -524,7 +525,6 @@ export type EmbeddedForegroundPromptContext = Pick<
   | "replyToMode"
   | "requireExplicitMessageTarget"
   | "disableMessageTool"
-  | "githubPublicationAvailable"
   | "conversationRecall"
   | "toolOverrides"
   | "permissionMode"
@@ -552,6 +552,8 @@ export type EmbeddedForegroundPromptContext = Pick<
   | "modelThinkingCapability"
   | "modelFallbacksOverride"
 > & {
+  /** SDK observation of the completed attempt; new runs recheck publication availability. */
+  githubPublicationAvailable?: boolean;
   agentId: string;
   workspaceDir: string;
   cwd?: string;

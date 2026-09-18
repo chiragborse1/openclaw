@@ -4,7 +4,6 @@ import type { GatewayBrowserClient, GatewayEventFrame } from "../api/gateway.ts"
 import "../components/app-topbar.ts";
 import "../components/assistant-panel.ts";
 import "../components/modal-dialog.ts";
-import "../pages/debug/debug-overlay.ts";
 import {
   formatDocumentTitle,
   isSettingsNavigationRoute,
@@ -202,12 +201,7 @@ class OpenClawShell
       }
     });
   }
-  // Lazy: the critical-notice module stays out of the startup chunk (perf
-  // budget); loaded on the first session.observer digest after boot.
-  criticalNoticeRuntime: Promise<
-    typeof import("../pages/chat/critical-observer-notice.runtime.ts")
-  > | null = null;
-  // Lazy for the same reason: the pairing modal is opened from Settings, not at
+  // Lazy: the pairing modal is opened from Settings, not at
   // boot, so its template, icons, and strings stay off the startup chunk.
   @state() devicePairSetupRenderer:
     | typeof import("../pages/devices/view-pairing.runtime.ts").renderDevicePairSetup
@@ -285,7 +279,9 @@ class OpenClawShell
       ? normalizeAgentLabel(agent)
       : resolveSessionDisplayName(
           sessionKey,
-          context.sessions.state.result?.sessions.find((session) => session.key === sessionKey),
+          context.sessions.presentation.result?.sessions.find(
+            (session) => session.key === sessionKey,
+          ),
         );
   }
 
@@ -612,6 +608,10 @@ class OpenClawShell
   readonly handleNativeHistoryState = this.shellChrome.handleNativeHistoryState;
   readonly handleWindowResize = this.shellChrome.handleWindowResize;
   readonly handleDocumentKeydown = this.shellChrome.handleDocumentKeydown;
+  get pendingDebugOverlayMode() {
+    return this.shellChrome.pendingDebugOverlayMode;
+  }
+  readonly togglePendingDebugOverlayMode = () => this.shellChrome.togglePendingDebugOverlayMode();
   readonly openPalette = this.shellChrome.openPalette;
   readonly refreshControlUi = (): Promise<boolean> => {
     const context = this.context;

@@ -11,6 +11,10 @@ import {
 } from "../agents/failover/assistant-request-failure-copy.js";
 import { isContextOverflowErrorFromTables } from "../agents/failover/context-overflow-tables.js";
 import { readTranscriptSenderIdentity } from "../chat/sender-identity.js";
+import {
+  projectAgentHistoryActivity,
+  type AgentHistoryActivity,
+} from "../infra/agent-activity-events.js";
 import { classifyGatewayStorageFailure } from "../infra/sqlite-error-diagnostics.js";
 import {
   readNestedToolActivity,
@@ -29,10 +33,12 @@ import {
   isAssistantInternalReasoningContentType,
 } from "./chat-display-projection.helpers.js";
 import {
+  createSubagentCoordinationHistoryProjection,
   filterVisibleProjectedHistoryMessages,
   mergeTtsSupplementMessages,
-  projectSessionsSendInterSessionMessages,
+  projectForwardedMessages,
   toProjectedMessages,
+  type SubagentCoordinationDisplayResolver,
 } from "./chat-display-projection.history.js";
 import { createMessageToolVisibleReplyProjection } from "./chat-display-projection.message-tool.js";
 import {
@@ -48,13 +54,16 @@ import type {
   CurrentUserProfileDisplayResolver,
 } from "./current-user-profile-display.js";
 
-type ChatDisplayProjectionOptions = {
+export type ChatDisplayProjectionOptions = {
+  resolveCronJobName?: (jobId: string) => string | undefined;
   includeCommentaryFallbacks?: boolean;
   maxChars?: number;
+  activity?: false;
   resolveCurrentUserProfileDisplay?: CurrentUserProfileDisplayResolver;
   stripEnvelope?: boolean;
   turnBoundaryPending?: boolean;
   assistantErrorPending?: boolean;
+  subagentCoordination?: SubagentCoordinationDisplayResolver;
 };
 
 /** Keep profile display reads local to one history page or event projection operation. */
@@ -119,6 +128,7 @@ function projectCurrentUserProfileAvatars(
 
 type ChatDisplayProjectionResult = {
   messages: Array<Record<string, unknown>>;
+  activity: AgentHistoryActivity[];
   turnBoundaryPending: boolean;
   assistantErrorPending: boolean;
   assistantErrorRecoveryObserved: boolean;
@@ -321,6 +331,7 @@ export function isPendingAssistantError(value: unknown): boolean {
   const message = asOptionalRecord(value);
   return (
     message?.role === "assistant" &&
+    message.display !== false &&
     message.stopReason === "error" &&
     (isPureStreamErrorFallbackAssistantMessage(message) ||
       (Boolean(readSessionTranscriptRunId(message)) &&
@@ -430,7 +441,7 @@ function projectEmptyAssistantErrorMessages(
 
 type ChatHistoryRecoveryOptions = Pick<
   ChatDisplayProjectionOptions,
-  "maxChars" | "stripEnvelope" | "assistantErrorPending"
+  "maxChars" | "stripEnvelope" | "assistantErrorPending" | "subagentCoordination"
 >;
 
 function prepareChatHistoryRecoveryMessages(
@@ -476,11 +487,16 @@ function prepareChatHistoryRecoveryMessages(
 
 export function createChatHistoryRecoveryProjection(options?: ChatHistoryRecoveryOptions) {
   const mirror = createMessageToolVisibleReplyProjection();
+  const projectCoordination = createSubagentCoordinationHistoryProjection(
+    options?.subagentCoordination,
+  );
   let recovery = createRecoveredAssistantErrorProjection(options?.assistantErrorPending);
   let processedMessages = 0;
   return {
     append(messages: unknown[]) {
-      const mirrored = mirror.append(prepareChatHistoryRecoveryMessages(messages, options));
+      const mirrored = mirror.append(
+        projectCoordination(prepareChatHistoryRecoveryMessages(messages, options)),
+      );
       if (mirrored.replacedFrom !== undefined && mirrored.replacedFrom < processedMessages) {
         // A late tool result can hide an earlier delivery mirror and undo a repair.
         // Replay the same recovery owner over retained derived rows in that case.
@@ -511,8 +527,18 @@ export function projectChatDisplayMessagesWithState(
   messages: unknown[],
   options?: ChatDisplayProjectionOptions,
 ): ChatDisplayProjectionResult {
+  options?.subagentCoordination?.assertCurrent?.();
   const recoveredErrors = projectChatHistoryRecovery(messages, options);
   const projectedErrors = projectEmptyAssistantErrorMessages(recoveredErrors.messages);
+  const activity =
+    options?.activity === false
+      ? []
+      : projectAgentHistoryActivity(
+          messages.flatMap((message) => {
+            const messageId = asOptionalRecord(asOptionalRecord(message)?.["__openclaw"])?.id;
+            return typeof messageId === "string" ? [{ messageId, message }] : [];
+          }),
+        );
   const sanitizedMessages = toProjectedMessages(
     sanitizeChatHistoryMessages(projectedErrors, Number.MAX_SAFE_INTEGER, {
       includeCommentaryFallbacks: options?.includeCommentaryFallbacks,
@@ -524,7 +550,7 @@ export function projectChatDisplayMessagesWithState(
       (message) => asOptionalRecord(message.openclawStreamFallback)?.source === "segment",
     );
   const filtered = filterVisibleProjectedHistoryMessages(
-    projectSessionsSendInterSessionMessages(sanitizedMessages),
+    projectForwardedMessages(sanitizedMessages, options?.resolveCronJobName),
     options?.turnBoundaryPending,
   );
   const displayMessages = sanitizeChatHistoryMessages(
@@ -532,6 +558,7 @@ export function projectChatDisplayMessagesWithState(
     options?.maxChars ?? DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS,
   ) as Array<Record<string, unknown>>;
   const result: ChatDisplayProjectionResult = {
+    activity,
     messages: projectCurrentUserProfileAvatars(
       displayMessages,
       options?.resolveCurrentUserProfileDisplay,
@@ -543,6 +570,7 @@ export function projectChatDisplayMessagesWithState(
   if (commentaryFallbacksObserved) {
     result.commentaryFallbacksObserved = true;
   }
+  options?.subagentCoordination?.assertCurrent?.();
   return result;
 }
 
@@ -550,7 +578,7 @@ export function projectChatDisplayMessages(
   messages: unknown[],
   options?: ChatDisplayProjectionOptions,
 ): Array<Record<string, unknown>> {
-  return projectChatDisplayMessagesWithState(messages, options).messages;
+  return projectChatDisplayMessagesWithState(messages, { ...options, activity: false }).messages;
 }
 
 export function projectChatDisplayMessage(

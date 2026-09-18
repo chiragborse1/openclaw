@@ -279,7 +279,10 @@ public struct OpenClawChatView: View {
             self.content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .onAppear { self.viewModel.load() }
+        .onAppear {
+            self.viewModel.refreshSourceContext()
+            self.viewModel.load()
+        }
         .onChange(of: self.turnRecapObservation, initial: true) { _, observation in
             self.updateTurnRecap(observation)
         }
@@ -599,8 +602,8 @@ public struct OpenClawChatView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
 
-        if self.displayOptions.contains(.toolActivity), !self.viewModel.pendingToolCalls.isEmpty {
-            ChatPendingToolsBubble(toolCalls: self.viewModel.pendingToolCalls)
+        if self.displayOptions.contains(.toolActivity), !self.viewModel.toolActivities.isEmpty {
+            ChatPendingToolsBubble(toolCalls: self.viewModel.toolActivities)
                 .equatable()
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -626,6 +629,12 @@ public struct OpenClawChatView: View {
     {
         let bubble = ChatMessageBubble(
             message: msg,
+            sourcePreviews: self.viewModel.sourcePreviews(for: msg),
+            sourceContextRevision: self.viewModel.sourcePreviewState.revision,
+            sourceFaviconsEnabled: self.viewModel.sourcePreviewState.context?.automaticallyFetchFavicons == true,
+            loadSourceFavicon: { [weak viewModel] host in
+                await viewModel?.transport.loadSourceFavicon(host: host)
+            },
             style: self.style,
             markdownVariant: self.markdownVariant,
             userAccent: self.userAccent,
@@ -1253,7 +1262,10 @@ extension OpenClawChatView {
                 phase: last.phase,
                 turnBoundary: last.turnBoundary,
                 steerTargetRunID: last.steerTargetRunID,
-                streamFallback: last.streamFallback)
+                streamFallback: last.streamFallback,
+                activity: message.activity.map { terminal in
+                    (last.activity ?? []).filter { $0.toolCallId != toolCallId } + terminal
+                } ?? last.activity)
             result[result.count - 1] = merged
         }
 

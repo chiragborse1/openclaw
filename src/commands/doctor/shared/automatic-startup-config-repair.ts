@@ -17,6 +17,7 @@ import { prepareConfigWriteTopology } from "../../../config/io.write-topology.js
 import { inheritLegacyDefaultAgentId } from "../../../config/legacy.default-agent-owner.js";
 import { findLegacyConfigIssues } from "../../../config/legacy.js";
 import { inspectShippedPluginInstallConfigRecords } from "../../../config/plugin-install-config-migration.js";
+import { copyConfigResolutionFactsThroughRewrite } from "../../../config/resolution-facts.js";
 import type { ConfigFileSnapshot, OpenClawConfig } from "../../../config/types.js";
 import type { PluginInstallRecord } from "../../../config/types.plugins.js";
 import {
@@ -120,11 +121,11 @@ function planConfigRepair(
     return withPluginMetadataSnapshotScope(metadata, () => invoke(metadata), { config });
   };
   const migration = withMetadata(projected, () =>
-    applyLegacyDoctorMigrations(
-      projected,
-      { authoredRaw: snapshot.parsed, resolvedRaw: snapshot.sourceConfig },
-      { pluginContracts },
-    ),
+    applyLegacyDoctorMigrations(projected, {
+      sourceConfigBeforeMigrations: snapshot.sourceConfigBeforeMigrations,
+      context: { authoredRaw: snapshot.parsed, resolvedRaw: snapshot.sourceConfig },
+      pluginContracts,
+    }),
   );
   const config = preserveDeferredPluginMigrationConfig({
     sourceConfig: snapshot.sourceConfig,
@@ -134,6 +135,9 @@ function planConfigRepair(
   if (isDeepStrictEqual(config, snapshot.sourceConfig)) {
     return null;
   }
+  // Migration rebuilds the source object; retain only facts whose values survived.
+  copyConfigResolutionFactsThroughRewrite(snapshot.sourceConfig, config);
+  let warnings = snapshot.warnings;
   const runtimeConfig = withMetadata(config, (metadata) => {
     const validationConfig = omitDeferredPluginMigrationConfig(config, deferredPluginMigrations);
     const validated = pluginContracts
@@ -141,7 +145,8 @@ function planConfigRepair(
           ...(metadata ? { pluginMetadataSnapshot: metadata } : {}),
           deferredPluginMigrations,
         })
-      : validateConfigObjectRaw(validationConfig);
+      : { ...validateConfigObjectRaw(validationConfig), warnings };
+    warnings = validated.warnings;
     const issues = (pluginContracts ? findDoctorLegacyConfigIssues : findLegacyConfigIssues)(
       validationConfig,
       validationConfig,
@@ -155,11 +160,13 @@ function planConfigRepair(
   if (!runtimeConfig) {
     return null;
   }
+  copyConfigResolutionFactsThroughRewrite(snapshot.sourceConfig, runtimeConfig);
   setDeferredPluginMigrationConfigFacts(config, deferredPluginMigrations);
   return {
     config,
     changes: [
       ...migration.changes,
+      ...(migration.warnings ?? []),
       ...(sourceRecords.status === "valid"
         ? ["Removed retired plugins.installs after preserving plugin install records."]
         : []),
@@ -170,6 +177,7 @@ function planConfigRepair(
       resolved: config,
       runtimeConfig,
       config: runtimeConfig,
+      warnings,
       valid: true,
       issues: [],
       legacyIssues: [],

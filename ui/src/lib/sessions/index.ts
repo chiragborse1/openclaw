@@ -5,6 +5,7 @@ import { formatUiError } from "../format-error.ts";
 import { createGatewayConnectionLifecycle } from "../gateway-connection-lifecycle.ts";
 import type { SessionCreateOutcome } from "./create.ts";
 import type { SessionChangedResult, SessionReconcileOptions } from "./reconcile.ts";
+import { subscribeAgentSelection, type SessionAgentSelection } from "./session-agent-selection.ts";
 import type { SessionCapability, SessionGateway, SessionState } from "./session-capability.ts";
 import { createSessionDeletions } from "./session-deletions.ts";
 import { createSessionEventSubscriptionOwner } from "./session-event-subscription.ts";
@@ -57,11 +58,6 @@ export type {
   SessionScopeHostWithKey,
 } from "./navigation.ts";
 
-type SessionAgentSelection = {
-  readonly state: { readonly selectedId: string | null };
-  subscribe: (listener: () => void) => () => void;
-};
-
 export function createSessionCapability(
   gateway: SessionGateway,
   agentSelection: SessionAgentSelection,
@@ -80,9 +76,29 @@ export function createSessionCapability(
     groupSettings: cacheOptions.bootRecord?.groups ?? [],
     sectionOrder: cacheOptions.bootRecord?.sectionOrder ?? [],
   };
+  let presentation: SessionCapability["presentation"] = { result: null, agentId: null };
+  let reconnectListRevision: number | null = null;
+  let presentationProfileId =
+    gateway.snapshot.phase === "connected"
+      ? (gateway.snapshot.selfUser?.id.trim() ?? null)
+      : cacheOptions.bootRecord?.profileId;
+  const retirePresentation = () => {
+    if (presentation.result || state.result || reconnectListRevision !== null) {
+      reconnectListRevision = canonicalListRevision + 1;
+    }
+    presentation = { result: null, agentId: null };
+  };
   const cacheLifecycle = createSessionRosterCacheLifecycle(gateway, agentSelection, cacheOptions, {
     readState: () => state,
-    publish: (next) => publish(next),
+    publish: (next) => {
+      // Cache admission and retirement already own credential/profile boundaries.
+      roster.retireWarmLists();
+      retirePresentation();
+      if (next.resultCached) {
+        presentation = { result: next.result, agentId: next.agentId, resultCached: true };
+      }
+      publish(next);
+    },
     connected: () => connection.capture() !== null,
     query: () => roster.lastOptions(),
   });
@@ -112,9 +128,14 @@ export function createSessionCapability(
   let hydratedClient: SessionGateway["snapshot"]["client"] = null;
   let hydratedSelfUserId: string | null = null;
   let connectionClient = gateway.snapshot.client;
-  let selectedAgentId = agentSelection.state.selectedId;
   let sessionEventSubscriptionError: string | null = null;
   let publishedErrorSource: "session-observer" | "operation" | null = null;
+
+  const notifySubscribers = () => {
+    for (const listener of listeners) {
+      listener(state);
+    }
+  };
 
   const publish = (next: SessionState, errorSource?: "session-observer" | "operation") => {
     if (next.error === null) {
@@ -124,11 +145,19 @@ export function createSessionCapability(
     }
     roster.bindOwner(next.result, next.agentId);
     state = next;
+    if (reconnectListRevision === null || canonicalListRevision >= reconnectListRevision) {
+      presentation = {
+        result: next.result,
+        agentId: next.agentId,
+        resultCached: next.resultCached,
+      };
+      if (!next.resultCached) {
+        reconnectListRevision = null;
+      }
+    }
     githubPublication.observeRows(next.result?.sessions ?? [], next.agentId);
     cacheLifecycle.persist(next);
-    for (const listener of listeners) {
-      listener(state);
-    }
+    notifySubscribers();
   };
 
   const retirePullRequestSummary = (key: string) => {
@@ -166,6 +195,9 @@ export function createSessionCapability(
       }
       const previousError = sessionEventSubscriptionError;
       sessionEventSubscriptionError = error;
+      if (error !== null) {
+        roster.retireWarmLists();
+      }
       const observerOwnsVisibleError = publishedErrorSource === "session-observer";
       if (error !== null && (state.error === null || observerOwnsVisibleError)) {
         publish({ ...state, error }, "session-observer");
@@ -193,6 +225,12 @@ export function createSessionCapability(
     snapshot: () => gateway.snapshot,
     readState: () => state,
     publish,
+    onWarmListsRetired: (agentIds) => {
+      const selectedId = agentSelection.state.selectedId;
+      if (!presentation.result && selectedId && agentIds.has(normalizeAgentId(selectedId))) {
+        notifySubscribers();
+      }
+    },
     observerError: () => sessionEventSubscriptionError,
     decorate: decorateRows,
     reconcileList: (result, revision, agentId) => {
@@ -236,10 +274,18 @@ export function createSessionCapability(
   });
 
   const notifyCreated = (key: string, entry?: SessionCreateOutcome["entry"], agentId?: string) => {
+    roster.retireWarmLists();
     thinkingClaims.recordCreated(key, entry, agentId);
     for (const listener of createdListeners) {
       listener(key);
     }
+  };
+
+  const publishMutation: typeof publish = (next, errorSource) => {
+    // A local mutation can complete without an event or successful refresh.
+    // Retire inactive windows before exposing its publication to selection.
+    roster.retireWarmLists();
+    publish(next, errorSource);
   };
 
   const mutations = createSessionMutations({
@@ -250,10 +296,9 @@ export function createSessionCapability(
       return row ? roster.projectFields(row) : undefined;
     },
     readState: () => state,
-    publish,
+    publish: publishMutation,
     copyRow: roster.copyRow,
-    refreshReplacement: roster.refreshReplacement,
-    refreshReplacementResult: roster.refreshReplacementResult,
+    reconcileMutation: roster.reconcileMutation,
     publishedRow: (key) => roster.publishedRow((row) => row.key === key),
     archiveFields: roster,
     readRevision: () => roster.requestRevision,
@@ -270,19 +315,22 @@ export function createSessionCapability(
     snapshot: () => gateway.snapshot,
     requestRevision: () => roster.requestRevision,
     readState: () => state,
-    publish,
+    publish: publishMutation,
     publishedRow: (matches) => roster.publishedRow(matches),
     redecorateLists: () => roster.redecorateLists(),
     invalidateLists: () => roster.scheduleEvent(),
-    refreshReplacement: roster.refreshReplacement,
+    reconcileMutation: roster.reconcileMutation,
     reconcilePreviousConnection: mutations.reconcileConfirmedPreviousConnection,
     retire: mutations.retireDeletedSession,
   });
 
-  const operations = createSessionScopedOperations({
+  const {
+    dispose: disposeOperations,
+    retireConnection: retireOperationConnection,
+    ...operations
+  } = createSessionScopedOperations({
     connection,
-    agentId: () => state.agentId,
-    refreshReplacement: roster.refreshReplacement,
+    reconcileMutation: roster.reconcileMutation,
     notifyCreated,
     reportError: (error) => publish({ ...state, error: formatUiError(error) }, "operation"),
   });
@@ -406,6 +454,19 @@ export function createSessionCapability(
     const connected = next.phase === "connected";
     const selfUserId = next.selfUser?.id.trim() || null;
     const connectionChanged = connection.transition(next);
+    if (connected) {
+      if (presentationProfileId !== undefined && presentationProfileId !== selfUserId) {
+        roster.retireWarmLists();
+        retirePresentation();
+        notifySubscribers();
+      }
+      presentationProfileId = selfUserId;
+    } else if (!next.client) {
+      retirePresentation();
+    } else if (presentation.result && reconnectListRevision === null) {
+      // Keep the paired presentation through partial startup reads until the canonical list lands.
+      reconnectListRevision = canonicalListRevision + 1;
+    }
     roster.observeGateway(next, connectionChanged);
     cacheLifecycle.synchronize(next);
     connectionClient = next.client;
@@ -420,7 +481,7 @@ export function createSessionCapability(
       roster.reset();
       sessionEventSubscription.reset();
       sessionEventSubscriptionError = null;
-      operations.retireConnection(previousClient);
+      retireOperationConnection(previousClient);
       groups.invalidate();
       swarmActivity.clear();
       mutations.retireConnection();
@@ -479,16 +540,13 @@ export function createSessionCapability(
     }
   });
 
-  const stopSelection = agentSelection.subscribe(() => {
-    const nextAgentId = agentSelection.state.selectedId;
-    if (selectedAgentId === nextAgentId) {
-      return;
-    }
-    selectedAgentId = nextAgentId;
+  const stopSelection = subscribeAgentSelection(agentSelection, (nextAgentId, foreground) => {
+    retirePresentation();
+    notifySubscribers();
     // Selection publishes before Gateway hydration. A new connection bootstraps
     // the current selection; route changes on a hydrated connection replace its roster.
     if (nextAgentId && hydratedClient === gateway.snapshot.client) {
-      void roster.refreshSelection(() => agentSelection.state.selectedId);
+      void roster.refreshSelection(() => agentSelection.state.selectedId, foreground);
     }
   });
 
@@ -525,21 +583,24 @@ export function createSessionCapability(
     const runEnded =
       hasActiveRun === false || (status !== null && status !== undefined && status !== "running");
     const isTerminalMessage = event.event === "session.message" && runEnded;
-    // Only an existing Gateway roster member that remains active can be replaced directly.
+    // Snapshot-only lifecycle events preserve membership; mutations still refresh
+    // Gateway-owned filters, ownership ordering, and query facets.
     const primarySnapshotApplied =
-      isTerminalMessage &&
       reconciled.applied &&
       eventInfo !== null &&
+      eventInfo.reason === null &&
       eventInfo.archived !== true &&
       typeof payload?.session === "object" &&
       payload.session !== null &&
       roster.canApplyPrimarySnapshot() &&
-      state.result?.sessions.some((row) =>
-        uiSessionEventMatches(
-          { ...gateway.snapshot, sessionKey: row.key },
-          eventInfo.key,
-          eventInfo.agentId,
-        ),
+      state.result?.sessions.some(
+        (row) =>
+          row.archived !== true &&
+          uiSessionEventMatches(
+            { ...gateway.snapshot, sessionKey: row.key },
+            eventInfo.key,
+            eventInfo.agentId,
+          ),
       ) === true;
     let primaryPublished = false;
     if (
@@ -581,6 +642,11 @@ export function createSessionCapability(
     get state() {
       return state;
     },
+    get presentation() {
+      return presentation.result
+        ? presentation
+        : (roster.selectionPresentation(agentSelection.state.selectedId) ?? presentation);
+    },
     get canonicalListRevision() {
       return canonicalListRevision;
     },
@@ -610,9 +676,11 @@ export function createSessionCapability(
     refresh: roster.refresh,
     invalidate: roster.scheduleEvent,
     refreshReplacement: roster.refreshReplacement,
+    reconcileMutation: roster.reconcileMutation,
+    capturePermissionObservation: permissions.capture,
     createResult: mutations.createResult,
     create: mutations.create,
-    recover: operations.recover,
+    ...operations,
     patch: mutations.patch,
     patchMany: mutations.patchMany,
     archiveVisibility: mutations.archiveVisibility,
@@ -629,19 +697,6 @@ export function createSessionCapability(
     deleteMany: deletions.deleteMany,
     deletionState: deletions.deletionState,
     reset: mutations.reset,
-    compact: operations.compact,
-    listFiles: operations.listFiles,
-    getFile: operations.getFile,
-    setFile: operations.setFile,
-    subscribeMessages: operations.subscribeMessages,
-    unsubscribeMessages: operations.unsubscribeMessages,
-    listCheckpoints: operations.listCheckpoints,
-    branchCheckpoint: operations.branchCheckpoint,
-    restoreCheckpoint: operations.restoreCheckpoint,
-    rewind: operations.rewind,
-    forkAtMessage: operations.forkAtMessage,
-    listBranches: operations.listBranches,
-    switchBranch: operations.switchBranch,
     groupsLoad: groups.load,
     groupsGeneration: groups.generation,
     groupsStatus: groups.status,
@@ -659,10 +714,11 @@ export function createSessionCapability(
       return () => listeners.delete(listener);
     },
     dispose() {
+      retirePresentation();
       cacheLifecycle.dispose();
       githubPublication.clear();
       roster.dispose();
-      operations.dispose();
+      disposeOperations();
       connection.dispose();
       groups.dispose();
       hydratedClient = null;

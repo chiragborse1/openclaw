@@ -38,7 +38,7 @@ import {
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { projectChatDisplayMessages } from "../chat-display-projection.js";
 import { listManagedImageRecordEntries } from "../managed-image-record-store.js";
-import { projectTranscriptEntryMessage } from "../session-transcript-message.js";
+import { projectTranscriptEntryMessage } from "../session-transcript-entry-message.js";
 import { loadSessionEntry } from "../session-utils.js";
 import { createChatSendReplyDispatch } from "./chat-send-reply-dispatch.js";
 
@@ -511,7 +511,7 @@ describe("webchat commentary media", () => {
         if (scenario === "revoked" || scenario === "aborted" || scenario === "target-rewrite") {
           expect(readMessage()).not.toHaveProperty("openclawDisplayContent");
           expect(await fs.readdir(state.statePath("media", "outgoing", "originals"))).toEqual([]);
-          expect(listManagedImageRecordEntries({ sessionKey: scope.sessionKey })).toEqual([]);
+          expect(await listManagedImageRecordEntries({ sessionKey: scope.sessionKey })).toEqual([]);
           if (scenario === "target-rewrite") {
             expect(readMessage().content).toEqual([
               { type: "text", text: "Rewritten while loading" },
