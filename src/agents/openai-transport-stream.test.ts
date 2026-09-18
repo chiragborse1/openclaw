@@ -4034,6 +4034,40 @@ describe("openai transport stream", () => {
     },
   );
 
+  it("keeps Astra's native cache option after simple transport preparation", () => {
+    const model = attachModelProviderRequestTransport(
+      {
+        id: "gpt-6-astra",
+        name: "GPT-6 Astra",
+        api: "openai-responses",
+        provider: "openai",
+        baseUrl: "https://api.openai.com/v1",
+        reasoning: true,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 400000,
+        maxTokens: 128000,
+      } satisfies Model<"openai-responses">,
+      {
+        proxy: {
+          mode: "explicit-proxy",
+          url: "http://proxy.internal:8443",
+        },
+      },
+    );
+    const prepared = prepareTransportAwareSimpleModel(model);
+
+    expect(prepared.api).toBe("openclaw-openai-responses-transport");
+    const params = buildOpenAIResponsesParams(
+      prepared,
+      { systemPrompt: "system", messages: [], tools: [] } as never,
+      { sessionId: "astra-session", cacheRetention: "long" },
+    ) as Record<string, unknown>;
+
+    expect(params.prompt_cache_options).toEqual({ ttl: "30m" });
+    expect(params).not.toHaveProperty("prompt_cache_retention");
+  });
+
   it("keeps legacy long retention for Astra on custom Responses endpoints", () => {
     const params = buildOpenAIResponsesParams(
       {

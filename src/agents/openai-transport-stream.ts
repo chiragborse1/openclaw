@@ -2206,6 +2206,12 @@ function isOpenAICodexResponsesModel(model: Model): boolean {
   );
 }
 
+function resolveOpenAIResponsesCachePolicyModel(model: Model): Model {
+  return model.api === "openclaw-openai-responses-transport"
+    ? { ...model, api: "openai-responses" }
+    : model;
+}
+
 function isNativeOpenAICodexResponsesBaseUrl(baseUrl?: string): boolean {
   const trimmed = typeof baseUrl === "string" ? baseUrl.trim() : "";
   if (!trimmed) {
@@ -2368,7 +2374,7 @@ export function buildOpenAIResponsesParams(
     stream: true,
     prompt_cache_key: promptCacheKey,
     ...resolveOpenAIResponsesCacheParams(
-      model,
+      resolveOpenAIResponsesCachePolicyModel(model),
       cacheRetention,
       compat.supportsLongCacheRetention ?? true,
     ),
