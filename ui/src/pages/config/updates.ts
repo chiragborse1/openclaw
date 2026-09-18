@@ -126,6 +126,7 @@ function renderRecordedAttempt(props: UpdatesViewProps) {
   const failed = run
     ? !isAcknowledgedAbandonedUpdateRun(run) && isReportableUpdateRun(run)
     : !props.recordedUpdateAttempt || classifyUpdateOutcome(props.recordedUpdateAttempt) !== "noop";
+  const readError = props.statusBanner?.source === "read";
   const canRetry = props.canUpdate && !props.updateBusy && !props.statusChecking;
   return renderSettingsSection({ title: t("updates.page.latestAttempt") }, [
     run
@@ -141,7 +142,7 @@ function renderRecordedAttempt(props: UpdatesViewProps) {
             description: props.statusBanner.text,
           })
         : nothing,
-    ...(!failed
+    ...(!failed && !readError
       ? []
       : [
           renderSettingsRow({
@@ -156,17 +157,21 @@ function renderRecordedAttempt(props: UpdatesViewProps) {
               >
                 ${t("updates.page.checkStatus")}
               </button>
-              <button
-                class="btn btn--sm primary"
-                type="button"
-                title=${canRetry ? "" : t("updates.adminRequired")}
-                ?disabled=${!canRetry}
-                @click=${props.onUpdateNow}
-              >
-                ${t("updates.page.retryUpdate")}
-              </button>
               ${
-                props.reportableUpdateFailureId
+                failed
+                  ? html`<button
+                      class="btn btn--sm primary"
+                      type="button"
+                      title=${canRetry ? "" : t("updates.adminRequired")}
+                      ?disabled=${!canRetry}
+                      @click=${props.onUpdateNow}
+                    >
+                      ${t("updates.page.retryUpdate")}
+                    </button>`
+                  : nothing
+              }
+              ${
+                failed && props.reportableUpdateFailureId
                   ? html`<button
                       class="btn btn--sm"
                       type="button"
@@ -184,15 +189,17 @@ function renderRecordedAttempt(props: UpdatesViewProps) {
               }
             </div>`,
           }),
-          renderSettingsRow({
-            title: t("updates.page.cliFallback"),
-            description: t("updates.triage.hostHint"),
-            stacked: true,
-            control: html`<details class="updates-attempt-details">
-              <summary>${t("updates.page.showCliFallback")}</summary>
-              <pre><code>openclaw triage</code></pre>
-            </details>`,
-          }),
+          failed
+            ? renderSettingsRow({
+                title: t("updates.page.cliFallback"),
+                description: t("updates.triage.hostHint"),
+                stacked: true,
+                control: html`<details class="updates-attempt-details">
+                  <summary>${t("updates.page.showCliFallback")}</summary>
+                  <pre><code>openclaw triage</code></pre>
+                </details>`,
+              })
+            : nothing,
         ]),
     props.updateFailureReportNotice
       ? renderUpdateFailureReportNotice(props.updateFailureReportNotice)

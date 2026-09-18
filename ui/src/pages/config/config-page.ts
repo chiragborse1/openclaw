@@ -34,7 +34,6 @@ import type { TypefaceId } from "../../app/typography.ts";
 import {
   confirmAndStartUpdate,
   createUpdateProgressWatcher,
-  type UpdateProgress,
 } from "../../app/update-confirmation.ts";
 import { canReportUpdateFailure } from "../../app/update-failure-report-controller.ts";
 import { CONTROL_UI_BUILD_INFO } from "../../build-info.ts";
@@ -962,11 +961,6 @@ export class ConfigPage extends OpenClawLightDomElement {
     return update.updateRunning || update.updateReconciliationPending;
   }
 
-  // The update dialog outlives this page and the connection, so it reads live
-  // snapshots rather than the values captured during a render.
-  private readonly watchUpdateProgress = (listener: (progress: UpdateProgress) => void) =>
-    createUpdateProgressWatcher(this.context)(listener);
-
   private isCuratedConfigMutationDisabled(): boolean {
     const runtimeState = this.context.runtimeConfig.state;
     return (
@@ -1025,7 +1019,8 @@ export class ConfigPage extends OpenClawLightDomElement {
         onUpdateNow: () =>
           void confirmAndStartUpdate({
             startGatewayUpdate: () => void this.context.overlays.runUpdate(),
-            watchUpdateProgress: this.watchUpdateProgress,
+            // The dialog outlives this page, so read live snapshots after each change.
+            watchUpdateProgress: createUpdateProgressWatcher(this.context),
             onCheckStatus: () => this.context.overlays.refreshUpdateStatus(),
             onAcknowledge: () => this.context.overlays.acknowledgeUpdateRun(),
             updateAvailable: overlaySnapshot.updateAvailable,
