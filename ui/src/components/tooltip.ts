@@ -107,7 +107,15 @@ class Tooltip extends OpenClawLitElement {
     // Block native dialog cancellation and later listeners on this capture target.
     event.preventDefault();
     event.stopImmediatePropagation();
+    const focused = ownerDocument.activeElement;
+    const restoreTarget =
+      focused && active.contains(focused) && !active.#triggerElement?.contains(focused)
+        ? active.resolveDescribedElement()
+        : null;
     active.close();
+    if (restoreTarget instanceof HTMLElement) {
+      active.focusTriggerWithoutOpening(restoreTarget);
+    }
     return true;
   };
 
@@ -718,7 +726,7 @@ class Tooltip extends OpenClawLitElement {
   }
 
   focusTriggerWithoutOpening(target: HTMLElement) {
-    if (target === this.#triggerElement && !target.matches(":focus")) {
+    if (this.#triggerElement?.contains(target) && !target.matches(":focus")) {
       // Navigation can replace a focused toggle with its inverse. Preserve the
       // focus handoff without presenting it as fresh tooltip intent.
       this.#suppressNextFocusOpen = true;

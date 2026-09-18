@@ -71,6 +71,21 @@ suite.define(() => {
         expect(await preview.locator("button").count()).toBe(0);
         await page.locator(".agent-chat__composer-shell textarea").tap();
         await expect.poll(() => preview.isVisible()).toBe(false);
+        await selectText(source);
+        await page.getByRole("button", { name: "Add to chat", exact: true }).tap();
+        await editor.getByRole("textbox").fill("Remove only this pending comment.");
+        await editor.getByRole("button", { name: "Save comment", exact: true }).tap();
+        const pendingChip = page.locator(
+          ".chat-attachments-preview .chat-selection-annotations__chip",
+        );
+        await pendingChip.getByRole("button", { name: "Remove all comments", exact: true }).tap();
+        await pendingChip.waitFor({ state: "detached" });
+        expect(await sentChip.count()).toBe(1);
+        await sentChip.tap();
+        await expect.poll(() => preview.isVisible()).toBe(true);
+        await expect.poll(() => preview.textContent()).toContain("Check the rollback steps. 🦞");
+        expect(await preview.textContent()).not.toContain("Remove only this pending comment.");
+        expect(await preview.locator("button").count()).toBe(0);
       },
     );
   });
@@ -163,7 +178,10 @@ suite.define(() => {
           await pin(2).waitFor({ state: "visible" });
           await chip(2).click();
           expect(await editor.count()).toBe(0);
-          expect(await page.getByRole("region", { name: "Comments", exact: true }).count()).toBe(0);
+          const openedPreview = page.getByRole("region", { name: "Comments", exact: true });
+          await expect.poll(() => openedPreview.isVisible()).toBe(true);
+          await composer.click();
+          await expect.poll(() => openedPreview.isVisible()).toBe(false);
           await capture("multiple");
 
           const pinBounds = (await pin(1).boundingBox())!;

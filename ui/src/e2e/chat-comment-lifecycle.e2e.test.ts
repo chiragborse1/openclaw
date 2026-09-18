@@ -169,6 +169,16 @@ suite.define(() => {
         expect(
           await preview.getByRole("button", { name: "Edit comment 2", exact: true }).count(),
         ).toBe(0);
+        await page.keyboard.press("Escape");
+        await expect.poll(() => preview.isVisible()).toBe(false);
+        await expect
+          .poll(() => trigger.evaluate((element) => element === document.activeElement))
+          .toBe(true);
+        await page.waitForTimeout(250);
+        expect(await preview.isVisible()).toBe(false);
+        await trigger.press("Enter");
+        await preview.waitFor({ state: "visible" });
+        await deletes.first().hover();
         await page.mouse.move(0, 0);
         await expect.poll(() => preview.isVisible()).toBe(false);
         await trigger.focus();
@@ -191,6 +201,22 @@ suite.define(() => {
         expect(await trigger.evaluate((element) => element === document.activeElement)).toBe(true);
         await page.keyboard.press("Tab");
         await page.keyboard.press("Enter");
+        await chip.waitFor({ state: "detached" });
+        await expect
+          .poll(() => composer.evaluate((element) => element === document.activeElement))
+          .toBe(true);
+        expect(await composer.inputValue()).toBe("Preserve the draft.");
+        const toast = page.getByRole("status").filter({ hasText: "Comments removed" });
+        await toast.getByRole("button", { name: "Undo", exact: true }).click();
+        await expect.poll(() => chip.textContent()).toContain("1 comment");
+        await expect
+          .poll(() => trigger.evaluate((element) => element === document.activeElement))
+          .toBe(true);
+        await trigger.press("Enter");
+        await preview.waitFor({ state: "visible" });
+        expect(await preview.textContent()).toContain("Second note");
+        expect(await preview.textContent()).not.toContain("First note");
+        await clear.click();
         await chip.waitFor({ state: "detached" });
         await expect
           .poll(() => composer.evaluate((element) => element === document.activeElement))
@@ -306,16 +332,26 @@ suite.define(() => {
         const threadBox = await thread.boundingBox();
         expect(sourceBox!.y + sourceBox!.height).toBeLessThan(threadBox!.y);
         const chip = page.locator(".chat-selection-annotations__chip");
+        const trigger = chip.getByRole("button", { name: "1 comment", exact: true });
         await chip.hover();
         const preview = page.getByRole("region", { name: "Comments", exact: true });
         await preview.getByRole("button", { name: "Edit comment 1", exact: true }).click();
         await waitForChatScrollIdle(page);
         await editor.getByRole("textbox").fill("Edited from the composer.");
         await editor.getByRole("button", { name: "Save", exact: true }).click();
+        await expect
+          .poll(() => trigger.evaluate((element) => element === document.activeElement))
+          .toBe(true);
         await chip.hover();
         await preview
           .getByText("Edited from the composer.", { exact: true })
           .waitFor({ state: "visible" });
+        await preview.getByRole("button", { name: "Edit comment 1", exact: true }).click();
+        await editor.getByRole("textbox").fill("Discard this edit.");
+        await editor.getByRole("textbox").press("Escape");
+        await expect
+          .poll(() => trigger.evaluate((element) => element === document.activeElement))
+          .toBe(true);
       },
     );
   });
