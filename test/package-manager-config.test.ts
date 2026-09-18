@@ -51,6 +51,12 @@ function collectPnpmLockPackages(): Set<string> {
       packages.add(`${parsed.name}@${metadata.version}`);
     }
   }
+  // Published workspace links do not appear in pnpm's registry package table,
+  // but the root npm shrinkwrap intentionally pins the separately published AI runtime.
+  const aiManifest = readJson("packages/ai/package.json") as { name?: string; version?: string };
+  if (aiManifest.name && aiManifest.version) {
+    packages.add(`${aiManifest.name}@${aiManifest.version}`);
+  }
   return packages;
 }
 
