@@ -1,5 +1,7 @@
 // Applies metadata defaults and plugin-dependent rules to a core-validated config.
+import { collectConfiguredModelRefs } from "@openclaw/model-catalog-core/configured-model-refs";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
+import { listAgentEntriesWithSource } from "../agents/agent-scope.js";
 import type { DeferredPluginMigration } from "../infra/deferred-plugin-migrations.js";
 import { planManifestModelCatalogSuppressions } from "../model-catalog/index.js";
 import { normalizePluginsConfig, normalizePluginId } from "../plugins/config-state.js";
@@ -28,6 +30,7 @@ import {
   hasChannelDmPolicyDependencyWarningCandidates,
   normalizeBundledChannelId,
 } from "./validation-channel-rules.js";
+import { collectHeartbeatOwnerWarnings } from "./validation-core.js";
 import {
   formatChannelConfigIssueMessage,
   resolveDeferredChannelConfigWarning,
@@ -38,9 +41,7 @@ import {
   collectSecretRefProviderSourceIssues,
 } from "./validation-plugin-registry.js";
 import {
-  prepareConfigPluginInputs,
   validatePreparedPluginSchemaValue,
-  type PreparedConfigPluginInputs,
   type PreparedPluginSchemaValidations,
 } from "./validation-prepared.js";
 import type { ValidateConfigWithPluginsResult } from "./validation.types.js";
@@ -79,7 +80,6 @@ export function validatePreparedConfigWithPlugins(
     applyDefaults: boolean;
     installedPluginRecordIds?: ReadonlySet<string>;
     onManifestRegistryResolved?: (registry: PluginManifestRegistry) => void;
-    preparedInputs?: PreparedConfigPluginInputs;
     schemaValidations?: PreparedPluginSchemaValidations;
   },
 ): ValidateConfigWithPluginsResult {
@@ -140,8 +140,7 @@ export function validatePreparedConfigWithPlugins(
   const deferredPluginIds = new Set(
     opts.deferredPluginMigrations?.map(({ pluginId }) => normalizePluginId(pluginId)),
   );
-  const inputs = opts.preparedInputs ?? prepareConfigPluginInputs(config);
-  warnings.push(...inputs.heartbeatWarnings);
+  warnings.push(...collectHeartbeatOwnerWarnings(config));
   const hasExplicitPluginsConfig = isRecord(raw) && Object.hasOwn(raw, "plugins");
 
   let compatPluginIds: ReadonlySet<string> | null = null;
@@ -401,7 +400,7 @@ export function validatePreparedConfigWithPlugins(
   };
 
   const validateConfiguredModelRefs = (): void => {
-    const configuredRefs = inputs.modelRefs;
+    const configuredRefs = collectConfiguredModelRefs(config);
     if (configuredRefs.length === 0) {
       return;
     }
@@ -592,7 +591,7 @@ export function validatePreparedConfigWithPlugins(
     config.agents?.defaults?.heartbeat?.target,
     "agents.defaults.heartbeat.target",
   );
-  for (const { entry, source } of inputs.agents) {
+  for (const { entry, source } of listAgentEntriesWithSource(config)) {
     const pathPrefix =
       source.kind === "entries" ? `agents.entries.${source.key}` : `agents.list.${source.index}`;
     validateHeartbeatTarget(entry?.heartbeat?.target, `${pathPrefix}.heartbeat.target`);

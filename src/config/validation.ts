@@ -17,10 +17,7 @@ import {
   validatePreparedConfigWithPlugins,
   type ValidateConfigWithPluginsParams,
 } from "./validation-plugin-rules.js";
-import {
-  prepareConfigPluginInputs,
-  type PreparedStrictConfigValidation,
-} from "./validation-prepared.js";
+import type { PreparedPluginSchemaValidations } from "./validation-prepared.js";
 import type {
   PreparedConfigValidationPluginMetadata,
   ValidateConfigWithPluginsResult,
@@ -92,44 +89,29 @@ async function validateConfigObjectWithPluginsAsyncInternal(
         cloneConfigWithResolutionFacts(pending.parsedConfig),
       )
     : undefined;
-  const strictValidation: PreparedStrictConfigValidation | undefined = strictConfig
-    ? {
-        raw: pending.migrated,
-        config: strictConfig,
-        inputs: prepareConfigPluginInputs(strictConfig),
-        schemas: new Map(),
-        manifestRegistry: metadata.manifestRegistry,
-        installedPluginRecordIds: metadata.installedPluginRecordIds,
-        deferredPluginMigrations: validationParams.deferredPluginMigrations,
-        env: validationParams.env,
-        homedir: validationParams.homedir,
-      }
+  const schemaValidations: PreparedPluginSchemaValidations | undefined = strictConfig
+    ? new Map()
     : undefined;
+  const preparedParams = { ...validationParams, pluginMetadataSnapshot: metadata };
   const result = finishConfigObjectWithPlugins(
     pending,
-    { ...validationParams, pluginMetadataSnapshot: metadata },
+    preparedParams,
     true,
     metadata.installedPluginRecordIds,
-    strictValidation,
+    schemaValidations,
   );
-  return result.ok && strictValidation ? { ...result, strictValidation } : result;
-}
-
-/** Complete raw strict policy checks using the core and schema facts already prepared by IO. */
-export function validatePreparedConfigStrict(
-  prepared: PreparedStrictConfigValidation,
-): ValidateConfigWithPluginsResult {
-  return validatePreparedConfigWithPlugins(prepared.raw, prepared.config, {
-    env: prepared.env,
-    homedir: prepared.homedir,
+  if (!result.ok || !strictConfig) {
+    return result;
+  }
+  const strict = validatePreparedConfigWithPlugins(pending.migrated, strictConfig, {
+    ...preparedParams,
     applyDefaults: false,
+    pluginValidation: "full",
     semanticValidation: "strict",
-    pluginMetadataSnapshot: { manifestRegistry: prepared.manifestRegistry },
-    installedPluginRecordIds: prepared.installedPluginRecordIds,
-    deferredPluginMigrations: prepared.deferredPluginMigrations,
-    preparedInputs: prepared.inputs,
-    schemaValidations: prepared.schemas,
+    installedPluginRecordIds: metadata.installedPluginRecordIds,
+    schemaValidations,
   });
+  return { ...result, strictIssues: strict.ok ? [] : strict.issues };
 }
 
 export function validateConfigObjectRawWithPlugins(
@@ -187,14 +169,14 @@ function finishConfigObjectWithPlugins(
   params: ValidateConfigWithPluginsParams | undefined,
   applyDefaults: boolean,
   installedPluginRecordIds?: ReadonlySet<string>,
-  strictValidation?: PreparedStrictConfigValidation,
+  schemaValidations?: PreparedPluginSchemaValidations,
 ): ValidateConfigWithPluginsResult {
   let manifestRegistry = params?.pluginMetadataSnapshot?.manifestRegistry;
   const result = validatePreparedConfigWithPlugins(migrated, parsedConfig, {
     ...params,
     applyDefaults,
     installedPluginRecordIds,
-    schemaValidations: strictValidation?.schemas,
+    schemaValidations,
     pluginValidation: params?.pluginValidation ?? "full",
     semanticValidation: params?.semanticValidation ?? "runtime",
     onManifestRegistryResolved: (registry) => {

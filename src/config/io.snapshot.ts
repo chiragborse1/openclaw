@@ -34,7 +34,10 @@ import {
   materializeConfigSnapshotDefaults,
   prepareConfigSnapshotValidation,
 } from "./io.snapshot-preparation.js";
-import type { CapturedConfigSnapshotPreparation } from "./io.snapshot-preparation.types.js";
+import type {
+  CapturedConfigSnapshotPreparation,
+  ValidationRequest,
+} from "./io.snapshot-preparation.types.js";
 import {
   collectInvalidConfigLegacyIssues,
   createConfigFileSnapshot,
@@ -276,29 +279,21 @@ async function readConfigSnapshotWithPreparation(
       env: deps.env,
       allowCurrentPluginMetadata: options.allowCurrentPluginMetadata,
     });
+    const validationRequest: ValidationRequest = {
+      kind: "validate",
+      prepareValidation: options.prepareValidation,
+      context,
+      metadata: pluginMetadata,
+      raw: validationConfigRaw,
+      sourceRaw: effectiveParsed,
+    };
     const { deferredPluginMigrations, validated } = await deps.measure(
       "config.snapshot.read.validate",
       () =>
         preparation
-          ? preparation((prepare) =>
-              prepare({
-                kind: "validate",
-                prepareValidation: options.prepareValidation,
-                context,
-                metadata: pluginMetadata,
-                raw: validationConfigRaw,
-                sourceRaw: effectiveParsed,
-              }),
-            )
+          ? preparation((prepare) => prepare(validationRequest))
           : options.prepareValidation
-            ? prepareConfigSnapshotValidation({
-                kind: "validate",
-                prepareValidation: options.prepareValidation,
-                context,
-                metadata: pluginMetadata,
-                raw: validationConfigRaw,
-                sourceRaw: effectiveParsed,
-              })
+            ? prepareConfigSnapshotValidation(validationRequest)
             : withSynchronousArtifactPreservingStateSnapshot(() => {
                 const pending = context.resolveDeferredPluginMigrations();
                 return {
@@ -447,7 +442,7 @@ async function readConfigSnapshotWithPreparation(
           includeFileHashesForWrite,
           includeFileTargetsForWrite,
           pluginMetadataSnapshot: pluginMetadata.getSnapshot(),
-          ...(validated.strictValidation ? { strictValidation: validated.strictValidation } : {}),
+          ...(validated.strictIssues ? { strictIssues: validated.strictIssues } : {}),
         },
         { observe: !callerRejectedSuspiciousRecovery },
       ),
@@ -611,7 +606,7 @@ async function readConfigSnapshotWithPluginMetadata(
   preparation?.assertCurrent();
   return {
     snapshot: result.snapshot,
-    ...(result.strictValidation ? { strictValidation: result.strictValidation } : {}),
+    ...(result.strictIssues ? { strictIssues: result.strictIssues } : {}),
     ...(pluginMetadataSnapshot ? { pluginMetadataSnapshot } : {}),
   };
 }

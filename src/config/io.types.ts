@@ -9,7 +9,6 @@ import type {
   RuntimeConfigWriteNotification,
 } from "./runtime-snapshot.js";
 import type { ConfigFileSnapshot, ConfigValidationIssue, OpenClawConfig } from "./types.js";
-import type { PreparedStrictConfigValidation } from "./validation-prepared.js";
 
 export type ParseConfigJson5Result = { ok: true; parsed: unknown } | { ok: false; error: string };
 
@@ -163,7 +162,7 @@ export type ConfigSnapshotMetadataReadOptions = ConfigSnapshotReadOptions & {
 };
 
 export type ReadConfigFileSnapshotInternalResult = {
-  strictValidation?: PreparedStrictConfigValidation;
+  strictIssues?: ConfigValidationIssue[];
   snapshot: ConfigFileSnapshot;
   envSnapshotForRestore?: Record<string, string | undefined>;
   includeFileHashesForWrite?: Record<string, string>;
@@ -172,7 +171,7 @@ export type ReadConfigFileSnapshotInternalResult = {
 };
 
 export type ReadConfigFileSnapshotWithPluginMetadataResult = {
-  strictValidation?: PreparedStrictConfigValidation;
+  strictIssues?: ConfigValidationIssue[];
   snapshot: ConfigFileSnapshot;
   pluginMetadataSnapshot?: PluginMetadataSnapshot;
 };

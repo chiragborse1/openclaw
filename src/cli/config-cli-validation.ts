@@ -21,7 +21,6 @@ import {
 import {
   collectUnsupportedSecretRefPolicyIssues,
   validateConfigObjectRawWithPlugins,
-  validatePreparedConfigStrict,
 } from "../config/validation.js";
 import type { DeferredPluginMigration } from "../infra/deferred-plugin-migrations.js";
 import { formatErrorMessage } from "../infra/errors.js";
@@ -91,17 +90,17 @@ export { formatInvalidConfigRepairHint };
 export async function finishConfigValidationForCli(
   read: ReadConfigFileSnapshotWithPluginMetadataResult,
 ): Promise<ConfigFileSnapshot> {
-  const { snapshot, strictValidation } = read;
+  const { snapshot, strictIssues } = read;
   if (!snapshot.valid || !snapshot.exists) {
     return snapshot;
   }
-  if (!strictValidation) {
-    throw new Error("Config validation requires its prepared source facts.");
+  if (!strictIssues) {
+    throw new Error("Config validation requires its prepared source result.");
   }
-  const validated = validatePreparedConfigStrict(strictValidation);
-  const issues = validated.ok
-    ? await collectConfigSecretProviderErrors({ config: snapshot.runtimeConfig })
-    : validated.issues;
+  const issues =
+    strictIssues.length === 0
+      ? await collectConfigSecretProviderErrors({ config: snapshot.runtimeConfig })
+      : strictIssues;
   return issues.length === 0 ? snapshot : { ...snapshot, valid: false, issues };
 }
 

@@ -22,7 +22,7 @@ export async function readConfigCliSnapshotWithMetadata(
 ): Promise<ReadConfigFileSnapshotWithPluginMetadataResult> {
   let snapshot = await read(...args);
   const pluginMetadataSnapshot = createPluginMetadataSnapshotFixture();
-  let strictValidation: ReadConfigFileSnapshotWithPluginMetadataResult["strictValidation"];
+  let strictIssues: ReadConfigFileSnapshotWithPluginMetadataResult["strictIssues"];
   if (args[0]?.prepareValidation === "strict" && snapshot.valid && snapshot.exists) {
     const { validateConfigObjectWithStrictFactsAsync } = await import("../config/validation.js");
     const validated = await validateConfigObjectWithStrictFactsAsync(snapshot.sourceConfig, {
@@ -32,10 +32,10 @@ export async function readConfigCliSnapshotWithMetadata(
       }),
     });
     if (validated.ok) {
-      strictValidation = validated.strictValidation;
+      strictIssues = validated.strictIssues;
     } else {
       snapshot = { ...snapshot, valid: false, issues: validated.issues };
     }
   }
-  return { snapshot, pluginMetadataSnapshot, strictValidation };
+  return { snapshot, pluginMetadataSnapshot, strictIssues };
 }

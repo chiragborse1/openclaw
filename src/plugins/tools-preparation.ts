@@ -25,7 +25,25 @@ export async function withPreparedPluginToolContexts<T>(
   const env = process.env;
   const cache = createPluginCache();
   const inspections: Array<Awaited<ReturnType<typeof acquirePluginRegistryForInspection>>> = [];
-  const outcome = await withPluginCache(cache, async () => {
+  await using _ = {
+    async [Symbol.asyncDispose]() {
+      const disposed = await Promise.allSettled(
+        inspections.map((inspection) => inspection.release()),
+      );
+      const failures = disposed.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      try {
+        failures.push(...(await retirePluginCache(cache)).failures.map((failure) => failure.error));
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length) {
+        throw new AggregateError(failures, "Plugin tool inspection could not confirm cleanup.");
+      }
+    },
+  };
+  return await withPluginCache(cache, async () => {
     const scopes = new Map<string, <TResult>(operation: () => TResult) => TResult>();
     for (const workspaceDir of new Set(params.workspaceDirs)) {
       const metadataSnapshot = await resolvePluginMetadataSnapshotAsync({
@@ -73,34 +91,5 @@ export async function withPreparedPluginToolContexts<T>(
       return prepared(operation);
     };
     return await run(scope);
-  }).then(
-    (value) => ({ ok: true as const, value }),
-    (error: unknown) => ({ ok: false as const, error }),
-  );
-  const cleanup = await Promise.allSettled(inspections.map((inspection) => inspection.release()));
-  cleanup.push(
-    ...(await Promise.allSettled([
-      retirePluginCache(cache).then((result) => {
-        if (result.failures.length > 0) {
-          throw new AggregateError(
-            result.failures.map((failure) => failure.error),
-            "Plugin tool inspection resources failed to retire.",
-          );
-        }
-      }),
-    ])),
-  );
-  const failures = cleanup.flatMap((result) =>
-    result.status === "rejected" ? [result.reason] : [],
-  );
-  if (failures.length > 0) {
-    throw new AggregateError(
-      [...(!outcome.ok ? [outcome.error] : []), ...failures],
-      "Plugin tool inspection could not confirm cleanup.",
-    );
-  }
-  if (!outcome.ok) {
-    throw outcome.error;
-  }
-  return outcome.value;
+  });
 }
