@@ -63,6 +63,7 @@ The runtime config snapshot, durable plugin-scoped storage, system utilities, ev
     events with `peekSystemEventEntries(sessionKey, agentId)`; this keeps `global`
     queues separate for each agent. Calls without an explicit owner retain
     configured-owner alias resolution and reject ambiguous agent selection.
+    Explicit owners that cannot normalize to an agent ID are rejected.
 
     `runHeartbeatOnce(...)` runs a single heartbeat cycle immediately, bypassing the normal coalesce timer. Delivery defaults to the configured operator DM (`commands.ownerAllowFrom`, then channel `allowFrom`); pass `{ heartbeat: { target: "none" } }` for an internal-only run.
 

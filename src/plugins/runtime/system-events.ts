@@ -3,15 +3,20 @@ import { getRuntimeConfig } from "../../config/io.js";
 import { canonicalizeMainSessionAlias } from "../../config/sessions/main-session.js";
 import { resolveSystemEventQueueKey } from "../../infra/system-event-ownership.js";
 import * as events from "../../infra/system-events.js";
-import { parseAgentSessionKey } from "../../routing/session-key.js";
+import { normalizeAgentIdStrict, parseAgentSessionKey } from "../../routing/session-key.js";
 
 /** Published SDK aliases resolve here; the process queues retain only qualified identities. */
 function resolveSystemEventSessionKey(sessionKey: string, agentId?: string): string {
+  const explicitOwner = agentId === undefined ? undefined : normalizeAgentIdStrict(agentId);
+  if (explicitOwner && !explicitOwner.ok) {
+    throw new Error("Invalid system event agentId.");
+  }
+  const normalizedAgentId = explicitOwner?.value;
   if (parseAgentSessionKey(sessionKey)) {
-    return resolveSystemEventQueueKey(sessionKey, agentId);
+    return resolveSystemEventQueueKey(sessionKey, normalizedAgentId);
   }
   const cfg = getRuntimeConfig();
-  const owner = resolveSessionAgentId({ config: cfg, sessionKey, agentId });
+  const owner = resolveSessionAgentId({ config: cfg, sessionKey, agentId: normalizedAgentId });
   return resolveSystemEventQueueKey(
     canonicalizeMainSessionAlias({ cfg, agentId: owner, sessionKey }),
     owner,

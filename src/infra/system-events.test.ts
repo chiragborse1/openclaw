@@ -111,16 +111,16 @@ describe("system events (session routing)", () => {
         const suffix = alias === "main" ? "work" : alias;
         expect(peekSystemEvents(`agent:alpha:${suffix}`)).toEqual(["Legacy caller"]);
         expect(peekSystemEvents(`agent:beta:${suffix}`)).toEqual([]);
-        enqueueRoutedSystemEvent("Owned caller", { agentId: "beta", sessionKey: alias });
-        expect(peekSdkSystemEventEntries(alias, "beta").map((event) => event.text)).toEqual([
+        enqueueRoutedSystemEvent("Owned caller", { agentId: " BETA ", sessionKey: alias });
+        expect(peekSdkSystemEventEntries(alias, " BETA ").map((event) => event.text)).toEqual([
           "Owned caller",
         ]);
         expect(peekSdkSystemEventEntries(alias).map((event) => event.text)).toEqual([
           "Legacy caller",
         ]);
-        expect(enqueueSdkSystemEvent("Runtime owner", { sessionKey: alias, agentId: "beta" })).toBe(
-          true,
-        );
+        expect(
+          enqueueSdkSystemEvent("Runtime owner", { sessionKey: alias, agentId: " BETA " }),
+        ).toBe(true);
         expect(peekSystemEvents(`agent:beta:${suffix}`)).toEqual(["Owned caller", "Runtime owner"]);
         expect(() =>
           enqueueSdkSystemEvent("Mismatched owner", {
@@ -136,6 +136,64 @@ describe("system events (session routing)", () => {
         });
         expect(() => enqueueSdkSystemEvent("Ambiguous", { sessionKey: alias })).toThrow();
         expect(peekSystemEvents(`agent:alpha:${suffix}`)).toEqual(["Legacy caller"]);
+      } finally {
+        if (previous) {
+          setRuntimeConfigSnapshot(previous);
+        } else {
+          clearRuntimeConfigSnapshot();
+        }
+      }
+    },
+  );
+
+  it.each(
+    ["!!!", "", " "].flatMap((agentId) =>
+      ["global", "agent:main:global"].flatMap((sessionKey) =>
+        ["enqueue", "peek", "routed"].map((operation) => ({ agentId, sessionKey, operation })),
+      ),
+    ),
+  )("rejects SDK $operation with owner '$agentId' for $sessionKey", (params) => {
+    const previous = getRuntimeConfigSnapshot();
+    try {
+      setRuntimeConfigSnapshot({
+        agents: { entries: { main: { default: true }, beta: {} } },
+        session: { scope: "global" },
+      });
+      enqueueSystemEvent("Main canary", { sessionKey: "agent:main:global" });
+      enqueueSystemEvent("Beta canary", { sessionKey: "agent:beta:global" });
+      expect(() => {
+        const { sessionKey, agentId, operation } = params;
+        if (operation === "peek") {
+          return peekSdkSystemEventEntries(sessionKey, agentId);
+        }
+        return operation === "routed"
+          ? enqueueRoutedSystemEvent("Invalid owner", { sessionKey, agentId })
+          : enqueueSdkSystemEvent("Invalid owner", { sessionKey, agentId });
+      }).toThrow(/agentId/);
+      expect(peekSystemEvents("agent:main:global")).toEqual(["Main canary"]);
+      expect(peekSystemEvents("agent:beta:global")).toEqual(["Beta canary"]);
+    } finally {
+      if (previous) {
+        setRuntimeConfigSnapshot(previous);
+      } else {
+        clearRuntimeConfigSnapshot();
+      }
+    }
+  });
+
+  it.each(["global", "agent:beta-team:global"])(
+    "preserves representable SDK owner normalization for %s",
+    (sessionKey) => {
+      const previous = getRuntimeConfigSnapshot();
+      try {
+        setRuntimeConfigSnapshot({ agents: { entries: { "beta-team": { default: true } } } });
+        expect(enqueueSdkSystemEvent("Team event", { sessionKey, agentId: " Beta Team " })).toBe(
+          true,
+        );
+        expect(
+          peekSdkSystemEventEntries(sessionKey, " Beta Team ").map((event) => event.text),
+        ).toEqual(["Team event"]);
+        expect(peekSystemEvents("agent:main:global")).toEqual([]);
       } finally {
         if (previous) {
           setRuntimeConfigSnapshot(previous);
